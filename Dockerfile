@@ -3,9 +3,18 @@
 # --- Stage 1: Build Frontend ---
 FROM node:22-alpine AS frontend-build
 WORKDIR /build
+
+# Copy package files first for better caching
 COPY package*.json ./
 RUN npm install
-COPY . .
+
+# Copy all source files and build
+COPY index.html ./
+COPY vite.config.js ./
+COPY postcss.config.cjs ./
+COPY tailwind.config.js ./
+COPY src/ ./src/
+COPY public/ ./public/
 RUN npm run build
 
 # --- Stage 2: Backend & Runtime ---
@@ -24,6 +33,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
 COPY backend/ ./backend/
+
 # Copy frontend build results
 COPY --from=frontend-build /build/dist/ ./dist/
 
@@ -37,5 +47,4 @@ ENV HOST=0.0.0.0
 EXPOSE 8000
 
 # Start application
-# We use -m backend.main to ensure imports work correctly
 CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
