@@ -1,0 +1,1 @@
+{"storage_providers":{"streamtape":{"enabled":true,"name":"StreamTape"},"doodstream":{"enabled":true,"name":"DoodStream"},"telegram":{"enabled":true,"name":"Telegram"},"local":{"enabled":false,"name":"Local Server (Disabled)"}},"default_storage":"streamtape"}

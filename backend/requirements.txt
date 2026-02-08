@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlmodel
+python-multipart
+passlib[bcrypt]
+python-dotenv
+python-telegram-bot
+httpx
+slowapi
+psycopg2-binary
+cryptography
