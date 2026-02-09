@@ -85,7 +85,7 @@ async def health_check():
 # Serve Frontend Static Files
 # This should be at the end to avoid catching API routes
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 
 # Path to the built frontend
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dist")
