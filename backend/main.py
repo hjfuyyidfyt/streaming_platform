@@ -85,29 +85,43 @@ async def health_check():
 # Serve Frontend Static Files
 # This should be at the end to avoid catching API routes
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 
 # Path to the built frontend
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dist")
+logger.info(f"Frontend dist path: {frontend_dist}, exists: {os.path.exists(frontend_dist)}")
 
 if os.path.exists(frontend_dist):
-    # Serve assets from /static/assets (mapping /static to the dist root)
-    app.mount("/static", StaticFiles(directory=frontend_dist), name="static")
-    
-    @app.get("/{full_path:path}")
-    async def serve_react_app(request: Request, full_path: str):
-        # Prevent catching API/System routes
-        if any(full_path.startswith(prefix) for prefix in ["api", "thumbnails", "stream", "health"]):
-            return Response(status_code=404)
-            
-        # Check if the requested file exists in dist
-        file_path = os.path.join(frontend_dist, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
-            
-        # Fallback to index.html for React SPA routing
-        return FileResponse(os.path.join(frontend_dist, "index.html"))
+    # Check if index.html exists
+    index_html_path = os.path.join(frontend_dist, "index.html")
+    if os.path.exists(index_html_path):
+        logger.info("Frontend build found, mounting static files...")
+        # Serve assets from /assets directly
+        assets_dir = os.path.join(frontend_dist, "assets")
+        if os.path.exists(assets_dir):
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        
+        @app.get("/{full_path:path}")
+        async def serve_react_app(request: Request, full_path: str):
+            # Prevent catching API/System routes
+            if any(full_path.startswith(prefix) for prefix in ["api", "thumbnails", "stream", "health"]):
+                return Response(status_code=404)
+                
+            # Check if the requested file exists in dist
+            file_path = os.path.join(frontend_dist, full_path)
+            if os.path.isfile(file_path):
+                return FileResponse(file_path)
+                
+            # Fallback to index.html for React SPA routing
+            return FileResponse(index_html_path)
+    else:
+        logger.warning("Frontend dist exists but index.html not found!")
+        @app.get("/")
+        async def root():
+            return {"message": "Frontend build incomplete - index.html missing"}
 else:
+    logger.info("Frontend dist not found, serving API only")
     @app.get("/")
     async def root():
         return {"message": "Welcome to the Video Streaming Platform API (Frontend not built)"}
+
