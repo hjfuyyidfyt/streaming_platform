@@ -29,6 +29,21 @@ const VideoDetails = () => {
     const videoRef = useRef(null);
     const lastSavedTime = useRef(0);
     const initialSeekDone = useRef(false);
+    const [adOverlayVisible, setAdOverlayVisible] = useState(true);
+
+    const handleAdClick = () => {
+        // Placeholder for Direct Link Ad
+        // Replace with actual direct link from Adsterra/Monetag
+        const adUrl = "https://www.effectivegatecpm.com/ieyn4dw3fw?key=390a194dfdfcc7ab638a23fab9da0fa2";
+        if (adUrl && adUrl !== "#") {
+            window.open(adUrl, "_blank");
+        }
+
+        setAdOverlayVisible(false);
+        if (videoRef.current) {
+            videoRef.current.play().catch(err => console.error("Play failed", err));
+        }
+    };
 
     useEffect(() => {
         const fetchVideoData = async () => {
@@ -349,12 +364,25 @@ const VideoDetails = () => {
                                             poster={video.thumbnail_url}
                                             onTimeUpdate={handleTimeUpdate}
                                             onError={() => setPlaybackError(true)}
+                                            onPlay={() => setAdOverlayVisible(false)}
                                         >
                                             {(activeSource.provider === 'telegram') && (
                                                 <p className="text-white p-4 text-center">Telegram playback requires client-side handling or proxy. (Implementation pending)</p>
                                             )}
                                             Your browser does not support the video tag.
                                         </video>
+
+                                        {/* Ad Overlay (Click to Play) */}
+                                        {adOverlayVisible && (
+                                            <div
+                                                className="absolute inset-0 z-20 cursor-pointer flex items-center justify-center bg-black/50 hover:bg-black/40 transition-colors group"
+                                                onClick={handleAdClick}
+                                            >
+                                                <div className="w-20 h-20 bg-red-600 rounded-full flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
+                                                    <svg className="w-10 h-10 text-white fill-current ml-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                                                </div>
+                                            </div>
+                                        )}
 
                                         {/* Playback Error Overlay */}
                                         {playbackError && (

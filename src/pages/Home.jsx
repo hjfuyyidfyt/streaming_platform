@@ -1,43 +1,47 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import VideoCard from '../components/video/VideoCard.jsx';
 import SkeletonVideoCard from '../components/video/SkeletonVideoCard.jsx';
 import Sidebar from '../components/layout/Sidebar.jsx';
+import AdBanner from '../components/layout/AdBanner.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { Search, Menu, Bell, Upload, User } from 'lucide-react';
-// import AdBanner from '../components/layout/AdBanner';
+import { Search, Menu, Bell, Upload, User, Loader2 } from 'lucide-react';
 
-// Mock data for Phase 2 visualization
 import { api } from '../services/api.js';
 
+const VIDEOS_PER_PAGE = 12;
+
 const Home = () => {
-    const { slug } = useParams(); // Get category slug from URL
+    const { slug } = useParams();
     const [videos, setVideos] = useState([]);
     const [categories, setCategories] = useState([]);
     const [continueWatching, setContinueWatching] = useState([]);
     const [activeCategory, setActiveCategory] = useState({ name: 'All', slug: 'all' });
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoading, setIsLoading] = useState(true);
-    // Default closed on mobile (< 1024px), open on desktop
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [hasMore, setHasMore] = useState(true);
+    const [page, setPage] = useState(0);
     const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 1024);
     const { user, isAuthenticated, logout } = useAuth();
+
+    // Ref for intersection observer (infinite scroll trigger)
+    const loadMoreRef = useRef(null);
 
     // Initial Fetch (Categories only)
     useEffect(() => {
         const fetchCategories = async () => {
             try {
                 const cats = await api.getCategories();
-                // Add 'All' option manually
                 setCategories([{ name: "All", slug: "all" }, ...cats]);
             } catch (err) {
                 console.error("Failed to load categories", err);
             }
         };
-
         fetchCategories();
     }, []);
 
-    // Handle URL-based category (from /category/:slug route)
+    // Handle URL-based category
     useEffect(() => {
         if (categories.length === 0) return;
 
@@ -51,39 +55,81 @@ const Home = () => {
         }
     }, [slug, categories, activeCategory.slug]);
 
-    // Filter/Search Logic - Handles ALL video fetching including initial load
-    useEffect(() => {
-        const fetchFilteredVideos = async () => {
+    // Fetch videos function
+    const fetchVideos = useCallback(async (pageNum, reset = false) => {
+        if (reset) {
             setIsLoading(true);
-            try {
-                let data;
-                if (searchQuery) {
-                    data = await api.searchVideos(searchQuery);
-                } else if (activeCategory.slug !== 'all') {
-                    data = await api.getVideosByCategory(activeCategory.slug);
-                } else {
-                    data = await api.getVideos();
-                }
-                setVideos(data);
+            setHasMore(true);
+        } else {
+            setIsLoadingMore(true);
+        }
 
-                if (isAuthenticated) {
-                    const cwData = await api.getContinueWatching(localStorage.getItem('token'));
-                    setContinueWatching(cwData.continue_watching || []);
-                }
-            } catch (err) {
-                console.error("Filtering failed", err);
-            } finally {
-                setIsLoading(false);
+        try {
+            const skip = pageNum * VIDEOS_PER_PAGE;
+            let data;
+
+            if (searchQuery) {
+                data = await api.searchVideos(searchQuery, skip, VIDEOS_PER_PAGE);
+            } else if (activeCategory.slug !== 'all') {
+                data = await api.getVideosByCategory(activeCategory.slug, skip, VIDEOS_PER_PAGE);
+            } else {
+                data = await api.getVideos(skip, VIDEOS_PER_PAGE);
             }
-        };
 
-        // Debounce search
+            // Check if we have more videos to load
+            if (data.length < VIDEOS_PER_PAGE) {
+                setHasMore(false);
+            }
+
+            if (reset) {
+                setVideos(data);
+            } else {
+                setVideos(prev => [...prev, ...data]);
+            }
+
+            // Fetch continue watching only on initial load
+            if (reset && isAuthenticated) {
+                const cwData = await api.getContinueWatching(localStorage.getItem('token'));
+                setContinueWatching(cwData.continue_watching || []);
+            }
+        } catch (err) {
+            console.error("Failed to fetch videos", err);
+        } finally {
+            setIsLoading(false);
+            setIsLoadingMore(false);
+        }
+    }, [searchQuery, activeCategory, isAuthenticated]);
+
+    // Reset and fetch when filters change
+    useEffect(() => {
+        setPage(0);
         const timeoutId = setTimeout(() => {
-            fetchFilteredVideos();
+            fetchVideos(0, true);
         }, 300);
-
         return () => clearTimeout(timeoutId);
-    }, [searchQuery, activeCategory]);
+    }, [searchQuery, activeCategory, fetchVideos]);
+
+    // Intersection Observer for infinite scroll
+    useEffect(() => {
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting && hasMore && !isLoading && !isLoadingMore) {
+                    setPage(prev => {
+                        const nextPage = prev + 1;
+                        fetchVideos(nextPage, false);
+                        return nextPage;
+                    });
+                }
+            },
+            { threshold: 0.1, rootMargin: '100px' }
+        );
+
+        if (loadMoreRef.current) {
+            observer.observe(loadMoreRef.current);
+        }
+
+        return () => observer.disconnect();
+    }, [hasMore, isLoading, isLoadingMore, fetchVideos]);
 
     return (
         <div className="min-h-screen bg-[#0f0f0f] text-white overflow-x-hidden">
@@ -218,24 +264,34 @@ const Home = () => {
 
                     <h2 className="text-xl font-bold mb-6">Recommended for you</h2>
 
-                    {/* <AdBanner format="banner" /> */}
-
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-y-6 sm:gap-y-8 gap-x-4 w-full max-w-[350px] mx-auto sm:max-w-none px-0 sm:px-0">
                         {isLoading
                             ? Array(8).fill(null).map((_, i) => <SkeletonVideoCard key={i} />)
-                            : videos.map(video => (
-                                <VideoCard key={video.id} video={video} />
+                            : videos.map((video, index) => (
+                                <React.Fragment key={video.id}>
+                                    <VideoCard video={video} />
+                                    {(index + 1) % 12 === 0 && (
+                                        <div className="col-span-full w-full flex justify-center">
+                                            <AdBanner format="banner" />
+                                        </div>
+                                    )}
+                                </React.Fragment>
                             ))
                         }
                     </div>
 
-                    {!isLoading && (
-                        <div className="mt-12 flex justify-center">
-                            <button className="text-gray-400 hover:text-white text-sm font-medium border border-gray-700 hover:border-gray-500 px-6 py-2 rounded-full transition-all">
-                                Load More
-                            </button>
-                        </div>
-                    )}
+                    {/* Infinite Scroll Trigger */}
+                    <div ref={loadMoreRef} className="mt-8 flex justify-center py-4">
+                        {isLoadingMore && (
+                            <div className="flex items-center gap-2 text-gray-400">
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                                <span className="text-sm">Loading more videos...</span>
+                            </div>
+                        )}
+                        {!hasMore && videos.length > 0 && (
+                            <p className="text-gray-500 text-sm">No more videos to load</p>
+                        )}
+                    </div>
                 </main>
             </div>
         </div>
