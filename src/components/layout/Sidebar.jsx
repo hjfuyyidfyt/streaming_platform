@@ -19,10 +19,11 @@ import {
     HelpCircle,
     Flag,
     ChevronRight,
-    Video
+    Video,
+    User
 } from 'lucide-react';
 
-// Helper components - declared outside main component to avoid recreation on each render
+// Helper components
 const NavItem = ({ icon: IconComponent, label, path, isActive }) => (
     <Link
         to={path}
@@ -49,7 +50,7 @@ const Divider = () => (
     <div className="border-t border-gray-800 my-3 mx-3" />
 );
 
-const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
+const Sidebar = ({ isOpen = true, categories = [], onClose = () => { }, isOverlay = false }) => {
     const location = useLocation();
     const { isAuthenticated } = useAuth();
 
@@ -88,8 +89,8 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
         { icon: HelpCircle, label: 'Help', path: '/help' },
     ];
 
-    if (!isOpen) {
-        // Collapsed mini sidebar - Hidden on mobile, visible on desktop
+    if (!isOpen && !isOverlay) {
+        // Collapsed mini sidebar (Desktop only)
         return (
             <aside className="hidden lg:flex flex-col items-center w-[72px] h-[calc(100vh-56px)] overflow-y-auto fixed top-14 left-0 z-40 bg-[#0f0f0f] py-3">
                 {mainItems.slice(0, 4).map(item => (
@@ -107,23 +108,21 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
         );
     }
 
-    // Full Sidebar - Fixed on mobile, Sticky on Desktop
     return (
         <>
-            {/* Mobile Overlay */}
+            {/* Overlay backdrop */}
             <div
-                className={`fixed inset-0 bg-black/50 z-40 lg:hidden ${isOpen ? 'block' : 'hidden'}`}
+                className={`fixed inset-0 bg-black/50 z-40 ${isOverlay ? '' : 'lg:hidden'} ${isOpen ? 'block' : 'hidden'}`}
                 onClick={onClose}
             />
 
             <aside className={`
                 w-60 h-[calc(100vh-56px)] overflow-y-auto bg-[#0f0f0f] scrollbar-thin scrollbar-thumb-gray-700
-                fixed top-14 left-0 z-40
+                fixed top-14 left-0 z-50
                 transition-transform duration-300 ease-in-out
-                ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-[72px]'} 
+                ${isOpen ? 'translate-x-0' : `-translate-x-full ${!isOverlay ? 'lg:translate-x-0 lg:w-[72px]' : ''}`} 
             `}>
                 <div className="py-3 px-2">
-                    {/* Main Navigation */}
                     <nav className="space-y-0.5">
                         {mainItems.map(item => (
                             <NavItem
@@ -138,7 +137,6 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
 
                     <Divider />
 
-                    {/* You Section */}
                     <SectionHeader title="You" showArrow />
                     <nav className="space-y-0.5">
                         {youItems.map(item => (
@@ -161,9 +159,7 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
                                 to="/auth"
                                 className="flex items-center justify-center gap-2 w-full py-2 px-4 border border-blue-500 text-blue-500 rounded-full text-sm font-medium hover:bg-blue-500/10 transition-colors"
                             >
-                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" />
-                                </svg>
+                                <User className="w-4 h-4" />
                                 Sign in
                             </Link>
                         </div>
@@ -171,7 +167,6 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
 
                     <Divider />
 
-                    {/* Explore Section */}
                     <SectionHeader title="Explore" />
                     <nav className="space-y-0.5">
                         {exploreItems.map(item => (
@@ -185,7 +180,6 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
                         ))}
                     </nav>
 
-                    {/* Categories */}
                     {categories.length > 0 && (
                         <>
                             <Divider />
@@ -209,7 +203,6 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
 
                     <Divider />
 
-                    {/* Settings & Help */}
                     <nav className="space-y-0.5">
                         {bottomItems.map(item => (
                             <NavItem
@@ -222,7 +215,6 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
                         ))}
                     </nav>
 
-                    {/* Footer */}
                     <div className="mt-4 px-3 pb-6">
                         <div className="text-xs text-gray-500 space-y-2">
                             <div className="flex flex-wrap gap-x-2 gap-y-1">

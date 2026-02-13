@@ -9,9 +9,138 @@ import {
     Send,
     Sparkles,
     User,
-    ChevronDown
+    ChevronDown,
+    X,
+    ArrowUpDown
 } from 'lucide-react';
 import './CommentSection.css';
+
+// ─── Sub-component: Comment Form ───
+const CommentForm = ({
+    isAuthenticated,
+    user,
+    newComment,
+    setNewComment,
+    handleSubmit,
+    inputFocused,
+    setInputFocused,
+    showSuperChat,
+    setShowSuperChat,
+    superChatAmount,
+    setSuperChatAmount
+}) => {
+    if (!isAuthenticated) {
+        return (
+            <div className="login-prompt">
+                <a href="/auth">Sign in</a> to comment
+            </div>
+        );
+    }
+
+    return (
+        <form onSubmit={handleSubmit} className="yt-comment-form">
+            <div className="form-avatar">
+                {user?.avatar_url ? (
+                    <img src={user.avatar_url} alt={user.display_name} />
+                ) : (
+                    <User size={18} />
+                )}
+            </div>
+            <div className="form-input-area">
+                <input
+                    type="text"
+                    placeholder="Add a comment..."
+                    value={newComment}
+                    onChange={(e) => setNewComment(e.target.value)}
+                    onFocus={() => setInputFocused(true)}
+                />
+                {inputFocused && (
+                    <div className="form-actions">
+                        <button
+                            type="button"
+                            className={`super-chat-toggle ${showSuperChat ? 'active' : ''}`}
+                            onClick={() => setShowSuperChat(!showSuperChat)}
+                            title="Super Chat"
+                        >
+                            <Sparkles size={16} />
+                        </button>
+                        <button
+                            type="button"
+                            className="cancel-btn"
+                            onClick={() => { setInputFocused(false); setNewComment(''); }}
+                        >
+                            Cancel
+                        </button>
+                        <button type="submit" className="submit-btn" disabled={!newComment.trim()}>
+                            Comment
+                        </button>
+                    </div>
+                )}
+                {showSuperChat && (
+                    <div className="super-chat-panel">
+                        <span>💰 Super Chat: $</span>
+                        <input
+                            type="number"
+                            min="1"
+                            max="500"
+                            value={superChatAmount}
+                            onChange={(e) => setSuperChatAmount(Number(e.target.value))}
+                        />
+                        <span className="super-chat-color" style={{
+                            background: superChatAmount >= 100 ? '#ff0000' :
+                                superChatAmount >= 50 ? '#ff6600' :
+                                    superChatAmount >= 20 ? '#ffcc00' : '#00cc00'
+                        }} />
+                    </div>
+                )}
+            </div>
+        </form>
+    );
+};
+
+// ─── Sub-component: Comments List ───
+const CommentsList = ({
+    loading,
+    comments,
+    handleLike,
+    handleDelete,
+    setReplyTo,
+    setReplyContent,
+    replyTo,
+    replyContent,
+    handleReply,
+    formatTimeAgo,
+    user,
+    isAuthenticated
+}) => (
+    <div className="comments-list">
+        {loading ? (
+            <div className="loading">Loading comments...</div>
+        ) : comments.length === 0 ? (
+            <div className="no-comments">No comments yet. Be the first!</div>
+        ) : (
+            comments.map(comment => (
+                <CommentItem
+                    key={comment.id}
+                    comment={comment}
+                    onLike={handleLike}
+                    onDelete={handleDelete}
+                    onReply={(id) => {
+                        setReplyTo(id);
+                        setReplyContent('');
+                    }}
+                    replyTo={replyTo}
+                    replyContent={replyContent}
+                    setReplyContent={setReplyContent}
+                    handleReply={handleReply}
+                    formatTimeAgo={formatTimeAgo}
+                    currentUserId={user?.id}
+                    isAuthenticated={isAuthenticated}
+                />
+            ))
+        )}
+    </div>
+);
 
 const CommentSection = ({ videoId }) => {
     const { user, token, isAuthenticated } = useAuth();
@@ -23,10 +152,22 @@ const CommentSection = ({ videoId }) => {
     const [showSuperChat, setShowSuperChat] = useState(false);
     const [superChatAmount, setSuperChatAmount] = useState(5);
     const [total, setTotal] = useState(0);
+    const [showMobileComments, setShowMobileComments] = useState(false);
+    const [inputFocused, setInputFocused] = useState(false);
 
     useEffect(() => {
         loadComments();
     }, [videoId]);
+
+    // Prevent body scroll when mobile overlay is open
+    useEffect(() => {
+        if (showMobileComments) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+        return () => { document.body.style.overflow = ''; };
+    }, [showMobileComments]);
 
     const loadComments = async () => {
         try {
@@ -51,6 +192,7 @@ const CommentSection = ({ videoId }) => {
             setNewComment('');
             setShowSuperChat(false);
             setTotal(total + 1);
+            setInputFocused(false);
         } catch (err) {
             console.error('Failed to add comment:', err);
         }
@@ -61,7 +203,6 @@ const CommentSection = ({ videoId }) => {
 
         try {
             const reply = await api.addComment(videoId, replyContent, parentId, null, token);
-            // Add reply to parent comment
             setComments(comments.map(c => {
                 if (c.id === parentId) {
                     return { ...c, replies: [...(c.replies || []), reply] };
@@ -80,7 +221,6 @@ const CommentSection = ({ videoId }) => {
 
         try {
             await api.likeComment(commentId, token);
-            // Update comment likes count locally
             setComments(comments.map(c => {
                 if (c.id === commentId) {
                     return { ...c, likes_count: c.likes_count + 1 };
@@ -124,97 +264,110 @@ const CommentSection = ({ videoId }) => {
         return date.toLocaleDateString();
     };
 
-    return (
-        <div className="comment-section">
-            <h3 className="comment-header">
-                <MessageCircle size={24} />
-                {total} Comments
-            </h3>
+    // Get first comment for preview
+    const firstComment = comments[0];
 
-            {/* Comment Input */}
-            {isAuthenticated ? (
-                <form onSubmit={handleSubmit} className="comment-form">
-                    <div className="comment-input-wrapper">
-                        <div className="user-avatar">
-                            {user?.avatar_url ? (
-                                <img src={user.avatar_url} alt={user.display_name} />
-                            ) : (
-                                <User size={20} />
-                            )}
+    const formProps = {
+        isAuthenticated,
+        user,
+        newComment,
+        setNewComment,
+        handleSubmit,
+        inputFocused,
+        setInputFocused,
+        showSuperChat,
+        setShowSuperChat,
+        superChatAmount,
+        setSuperChatAmount
+    };
+
+    const listProps = {
+        loading,
+        comments,
+        handleLike,
+        handleDelete,
+        setReplyTo,
+        setReplyContent,
+        replyTo,
+        replyContent,
+        handleReply,
+        formatTimeAgo,
+        user,
+        isAuthenticated
+    };
+
+    return (
+        <>
+            {/* ═══ Mobile: Compact Preview Bar (YouTube Pill Style) ═══ */}
+            <div className="lg:hidden">
+                <div
+                    className="comment-preview-bar"
+                    onClick={() => setShowMobileComments(true)}
+                >
+                    <div className="flex flex-col gap-1 w-full overflow-hidden">
+                        <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-bold text-white">Comments</h3>
+                            <span className="text-[13px] text-gray-400">{total}</span>
                         </div>
-                        <input
-                            type="text"
-                            placeholder="Add a comment..."
-                            value={newComment}
-                            onChange={(e) => setNewComment(e.target.value)}
-                            className="comment-input"
-                        />
-                        <button
-                            type="button"
-                            className={`super-chat-toggle ${showSuperChat ? 'active' : ''}`}
-                            onClick={() => setShowSuperChat(!showSuperChat)}
-                            title="Super Chat"
-                        >
-                            <Sparkles size={18} />
-                        </button>
-                        <button type="submit" className="send-btn" disabled={!newComment.trim()}>
-                            <Send size={18} />
-                        </button>
+
+                        {firstComment && (
+                            <div className="flex items-center gap-2 min-w-0">
+                                <div className="w-6 h-6 rounded-full bg-blue-500 overflow-hidden flex-shrink-0">
+                                    {firstComment.user?.avatar_url ? (
+                                        <img src={firstComment.user.avatar_url} alt="" className="w-full h-full object-cover" />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center bg-purple-600 text-[10px] text-white font-bold">
+                                            {(firstComment.user?.display_name || firstComment.user?.username || "U")[0]}
+                                        </div>
+                                    )}
+                                </div>
+                                <span className="text-[13px] text-gray-200 truncate pr-4">
+                                    {firstComment.content}
+                                </span>
+                            </div>
+                        )}
                     </div>
 
-                    {showSuperChat && (
-                        <div className="super-chat-panel">
-                            <span>💰 Super Chat Amount: $</span>
-                            <input
-                                type="number"
-                                min="1"
-                                max="500"
-                                value={superChatAmount}
-                                onChange={(e) => setSuperChatAmount(Number(e.target.value))}
-                            />
-                            <span className="super-chat-color" style={{
-                                background: superChatAmount >= 100 ? '#ff0000' :
-                                    superChatAmount >= 50 ? '#ff6600' :
-                                        superChatAmount >= 20 ? '#ffcc00' : '#00cc00'
-                            }} />
-                        </div>
-                    )}
-                </form>
-            ) : (
-                <div className="login-prompt">
-                    <a href="/auth">Sign in</a> to comment
+                    <div className="flex-shrink-0 flex items-center gap-1 text-gray-400">
+                        <ArrowUpDown size={16} />
+                    </div>
                 </div>
-            )}
 
-            {/* Comments List */}
-            <div className="comments-list">
-                {loading ? (
-                    <div className="loading">Loading comments...</div>
-                ) : comments.length === 0 ? (
-                    <div className="no-comments">No comments yet. Be the first!</div>
-                ) : (
-                    comments.map(comment => (
-                        <CommentItem
-                            key={comment.id}
-                            comment={comment}
-                            onLike={handleLike}
-                            onDelete={handleDelete}
-                            onReply={(id) => {
-                                setReplyTo(id);
-                                setReplyContent('');
-                            }}
-                            replyTo={replyTo}
-                            replyContent={replyContent}
-                            setReplyContent={setReplyContent}
-                            handleReply={handleReply}
-                            formatTimeAgo={formatTimeAgo}
-                            currentUserId={user?.id}
-                            isAuthenticated={isAuthenticated}
-                        />
-                    ))
+                {/* Mobile Bottom Sheet Overlay */}
+                {showMobileComments && (
+                    <div
+                        className="comment-overlay-backdrop"
+                        onClick={(e) => { if (e.target === e.currentTarget) setShowMobileComments(false); }}
+                    >
+                        <div className="comment-overlay-sheet">
+                            <div className="comment-overlay-header">
+                                <h3>Comments</h3>
+                                <button onClick={() => setShowMobileComments(false)}>
+                                    <X size={24} />
+                                </button>
+                            </div>
+                            <div className="comment-overlay-body">
+                                <CommentForm {...formProps} />
+                                <CommentsList {...listProps} />
+                            </div>
+                        </div>
+                    </div>
                 )}
             </div>
-        </div>
+
+            {/* ═══ Desktop: Inline Comments ═══ */}
+            <div className="hidden lg:block comment-section-desktop">
+                <div className="comment-count-header">
+                    <h3>{total} Comments</h3>
+                    <button className="sort-btn">
+                        <ArrowUpDown size={16} />
+                        Sort by
+                    </button>
+                </div>
+                <CommentForm {...formProps} />
+                <CommentsList {...listProps} />
+            </div>
+        </>
     );
 };
 
@@ -232,7 +385,7 @@ const CommentItem = ({
     isAuthenticated,
     isReply = false
 }) => {
-    const [showReplies, setShowReplies] = useState(true);
+    const [showReplies, setShowReplies] = useState(false);
 
     return (
         <div
@@ -249,14 +402,14 @@ const CommentItem = ({
                 {comment.user?.avatar_url ? (
                     <img src={comment.user.avatar_url} alt={comment.user.display_name} />
                 ) : (
-                    <User size={isReply ? 16 : 20} />
+                    <User size={isReply ? 14 : 18} />
                 )}
             </div>
 
             <div className="comment-body">
                 <div className="comment-meta">
                     <span className="comment-author">
-                        {comment.user?.display_name || comment.user?.username || 'User'}
+                        @{comment.user?.display_name || comment.user?.username || 'User'}
                     </span>
                     <span className="comment-time">{formatTimeAgo(comment.created_at)}</span>
                     {comment.is_edited && <span className="edited-tag">(edited)</span>}
@@ -266,7 +419,7 @@ const CommentItem = ({
 
                 <div className="comment-actions">
                     <button onClick={() => onLike(comment.id)} disabled={!isAuthenticated}>
-                        <Heart size={14} /> {comment.likes_count || 0}
+                        <Heart size={14} /> {comment.likes_count || ''}
                     </button>
                     {!isReply && (
                         <button onClick={() => onReply(comment.id)} disabled={!isAuthenticated}>
@@ -290,10 +443,8 @@ const CommentItem = ({
                             onChange={(e) => setReplyContent(e.target.value)}
                             autoFocus
                         />
-                        <button onClick={() => handleReply(comment.id)}>
-                            <Send size={14} />
-                        </button>
                         <button className="cancel-btn" onClick={() => onReply(null)}>Cancel</button>
+                        <button onClick={() => handleReply(comment.id)}>Reply</button>
                     </div>
                 )}
 
@@ -305,7 +456,7 @@ const CommentItem = ({
                             onClick={() => setShowReplies(!showReplies)}
                         >
                             <ChevronDown className={showReplies ? 'rotated' : ''} size={16} />
-                            {comment.replies.length} replies
+                            {comment.replies.length} {comment.replies.length === 1 ? 'reply' : 'replies'}
                         </button>
                         {showReplies && (
                             <div className="replies-list">

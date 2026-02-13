@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../services/api.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import { Share2, Eye, Calendar, Settings, User, LogOut, AlertCircle, RefreshCw } from 'lucide-react';
+import { Share2, Eye, Calendar, Settings, User, LogOut, AlertCircle, RefreshCw, ThumbsUp, ThumbsDown, Download, MoreHorizontal, ChevronDown, ChevronUp, Search, Bell, Menu } from 'lucide-react';
 import VideoCard from '../components/video/VideoCard.jsx';
 import AdBanner from '../components/layout/AdBanner.jsx';
 import LikeButton from '../components/video/LikeButton.jsx';
 import CommentSection from '../components/video/CommentSection.jsx';
 import SubscribeButton from '../components/video/SubscribeButton.jsx';
 import AddToPlaylist from '../components/video/AddToPlaylist.jsx';
+import Sidebar from '../components/layout/Sidebar.jsx'; // Import Sidebar
 import { ListPlus } from 'lucide-react';
 
 const VideoDetails = () => {
@@ -20,6 +21,7 @@ const VideoDetails = () => {
     const [sources, setSources] = useState([]);
     const [activeSource, setActiveSource] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [descExpanded, setDescExpanded] = useState(false);
 
     // Quality selection state
     const [currentResolution, setCurrentResolution] = useState(null);
@@ -30,36 +32,45 @@ const VideoDetails = () => {
     const lastSavedTime = useRef(0);
     const initialSeekDone = useRef(false);
     const [adOverlayVisible, setAdOverlayVisible] = useState(true);
+    const [sidebarOpen, setSidebarOpen] = useState(false); // Sidebar state
+    const [categories, setCategories] = useState([]); // Categories state
 
     const handleAdClick = () => {
-        // Placeholder for Direct Link Ad
-        // Replace with actual direct link from Adsterra/Monetag
         const adUrl = "https://www.effectivegatecpm.com/ieyn4dw3fw?key=390a194dfdfcc7ab638a23fab9da0fa2";
         if (adUrl && adUrl !== "#") {
             window.open(adUrl, "_blank");
         }
-
         setAdOverlayVisible(false);
         if (videoRef.current) {
             videoRef.current.play().catch(err => console.error("Play failed", err));
         }
     };
 
+    // Fetch video details and categories
     useEffect(() => {
-        const fetchVideoData = async () => {
+        const fetchData = async () => {
             setLoading(true);
             try {
-                const videoData = await api.getVideo(id);
+                // Fetch video details and categories in parallel
+                const [videoData, categoriesData] = await Promise.all([
+                    api.getVideo(id),
+                    api.getCategories()
+                ]);
+
                 setVideo(videoData);
+                setCategories([{ name: "All", slug: "all" }, ...categoriesData]);
 
-                // Prepare Sources
+                // Fetch related videos (by category if available)
+                let relatedData = [];
+                if (videoData.category && videoData.category.slug) {
+                    relatedData = await api.getVideosByCategory(videoData.category.slug, 0, 15);
+                } else {
+                    relatedData = await api.getVideos(0, 15);
+                }
+                setRelatedVideos(relatedData.filter(v => v.id !== parseInt(id)));
+
                 const videoSources = videoData.sources || [];
-
-                // Helper: deduplicate providers for Server Buttons
-                // Groups sources by provider. e.g. { 'streamtape': [source720, source480], 'telegram': [...] }
-                // For legacy or single-mode, we might just have one.
-
-                // Add "Primary" source (legacy support)
+                // ... (rest of source logic follows) ...
                 if (videoSources.length === 0) {
                     if (videoData.storage_mode === 'streamtape' || videoData.storage_mode === 'doodstream') {
                         videoSources.push({
@@ -79,63 +90,33 @@ const VideoDetails = () => {
                 }
                 setSources(videoSources);
 
-                // Set Default Source Priority: DoodStream -> Telegram -> StreamTape -> Local
                 const priority = ['doodstream', 'telegram', 'streamtape', 'local'];
-
-                // Find best provider first
                 const uniqueProviders = [...new Set(videoSources.map(s => s.provider))];
                 const bestProvider = uniqueProviders.sort((a, b) => priority.indexOf(a) - priority.indexOf(b))[0];
-
-                // Find best resolution for that provider (highest)
                 const providerSources = videoSources.filter(s => s.provider === bestProvider);
-                // logic to pick highest res or 'Original'
-                const bestSource = providerSources[0]; // Simplified for now, can add resolution sorting later
+                const bestSource = providerSources[0];
 
                 setActiveSource(bestSource || videoSources[0]);
                 setCurrentResolution(bestSource?.resolution || 'Original');
 
-                // Record View
+                // Record view
                 api.recordView(id);
 
-                // We NO LONGER need independent resolution fetching for Local/Telegram only.
-                // We derive available resolutions from the `videoSources` for the current provider.
-                // BUT, for Telegram/Local legacy that uses `VideoResolution` table (fetched via api.getVideoResolutions), we might need to merge them?
-                // The new system stores everything in `VideoSource`. 
-                // Let's assume `VideoSource` is the source of truth for NEW uploads.
-                // For OLD uploads (Telegram specific), `api.getVideoResolutions` returns them.
-                // We should probably merge them into `sources` state if they aren't already there.
-                // However, `videoData.sources` comes from the `Video` relationship.
-                // My `upload.py` creates `VideoResolution` (legacy table) AND `VideoSource` (new table) for Telegram.
-                // So `video.sources` should have them. 
-                // Wait, `upload_video` creates `VideoSource` for the *initial* upload.
-                // `background_transcode_and_upload` creates `VideoResolution` (Line 233 in upload.py BEFORE my edit).
-                // AFTER my edit, `background_transcode_and_upload` creates `VideoSource` for ALL providers.
-                // So `video.sources` SHOULD contain all resolution variants.
-
-                // So we can rely on `videoSources` state.
-
-                // Fetch related videos
-                let related = [];
-                if (videoData.category && videoData.category.slug) {
-                    related = await api.getVideosByCategory(videoData.category.slug, 0, 8);
-                } else {
-                    related = await api.getVideos(0, 8);
-                }
-                setRelatedVideos(related.filter(v => v.id !== parseInt(id)));
-            } catch (error) {
-                console.error("Failed to fetch video details", error);
+            } catch (err) {
+                console.error("Failed to fetch video data", err);
             } finally {
                 setLoading(false);
             }
         };
 
         if (id) {
-            fetchVideoData();
+            fetchData();
             window.scrollTo(0, 0);
+            setDescExpanded(false);
+            setAdOverlayVisible(true);
         }
     }, [id]);
 
-    // Force reload video element when active source changes
     useEffect(() => {
         if (videoRef.current) {
             videoRef.current.load();
@@ -151,14 +132,10 @@ const VideoDetails = () => {
         }
     };
 
-    // Dynamic Polling for background process status
     useEffect(() => {
         let interval;
-
         const checkProcessing = (currentSources) => {
             if (!currentSources || currentSources.length === 0) return true;
-            // New system goal: 3 providers (tg, st, dd) * 3 res (720, 480, 240) = 9
-            // If less than 6 (e.g. only original servers done but no transcoding), show processing.
             return currentSources.length < 9;
         };
 
@@ -178,11 +155,10 @@ const VideoDetails = () => {
                 } catch (err) {
                     console.error("Polling error", err);
                 }
-            }, 20000); // Poll every 20s
+            }, 20000);
         } else {
             setIsProcessing(false);
         }
-
         return () => clearInterval(interval);
     }, [id, video, sources]);
 
@@ -197,7 +173,6 @@ const VideoDetails = () => {
         }
     };
 
-    // Resume playback position
     useEffect(() => {
         if (video && isAuthenticated && !initialSeekDone.current) {
             const fetchProgress = async () => {
@@ -216,62 +191,43 @@ const VideoDetails = () => {
         }
     }, [video, isAuthenticated, id]);
 
-
-
     const handleTimeUpdate = () => {
         if (!videoRef.current || !isAuthenticated) return;
-
         const currentTime = Math.floor(videoRef.current.currentTime);
-        if (Math.abs(currentTime - lastSavedTime.current) >= 10) { // Save every 10s
+        if (Math.abs(currentTime - lastSavedTime.current) >= 10) {
             lastSavedTime.current = currentTime;
             const token = localStorage.getItem('token');
             const total = videoRef.current.duration;
-            const completed = total > 0 && (currentTime / total) > 0.9; // 90% = completed
+            const completed = total > 0 && (currentTime / total) > 0.9;
             api.saveProgress(video.id, currentTime, completed, token).catch(e => console.error(e));
         }
     };
 
     const handleServerChange = (newProvider) => {
-        // Find best resolution for this provider
-        // Sort by resolution (naive check: looking for digits)
         const providerSources = sources.filter(s => s.provider === newProvider);
         if (providerSources.length === 0) return;
-
-        // Try to keep current resolution if available
         let newSource = providerSources.find(s => s.resolution === currentResolution);
-
         if (!newSource) {
-            // Fallback to highest available
-            newSource = providerSources[0]; // Simplified sort logic for now
+            newSource = providerSources[0];
         }
-
         setActiveSource(newSource);
         setCurrentResolution(newSource.resolution || 'Original');
     };
 
-    // Handle quality change
     const handleQualityChange = (newResolution) => {
         if (!activeSource) return;
-
         const videoElement = videoRef.current;
         const currentTime = videoElement ? videoElement.currentTime : 0;
-
-        // Find source with same provider and new resolution
         let targetSource;
         if (newResolution === 'Original') {
             targetSource = sources.find(s => s.provider === activeSource.provider && (s.resolution === null || s.resolution === 'Original'));
         } else {
             targetSource = sources.find(s => s.provider === activeSource.provider && s.resolution === newResolution);
         }
-
         if (targetSource) {
             setActiveSource(targetSource);
             setCurrentResolution(newResolution);
             setShowQualityMenu(false);
-
-            // Note: IFRAME sources (StreamTape) won't support seek restoration this way easily 
-            // unless the iframe API supports it. For now, video restarts.
-            // HTML5 video will restore.
             setTimeout(() => {
                 if (videoRef.current) {
                     videoRef.current.currentTime = currentTime;
@@ -281,76 +237,130 @@ const VideoDetails = () => {
         }
     };
 
-    // Compute derived state for UI
+    // Derived state
     const distinctProviders = [...new Set(sources.map(s => s.provider))];
     const currentProviderResolutions = sources
         .filter(s => s.provider === activeSource?.provider)
         .map(s => s.resolution || 'Original')
-        .filter((v, i, a) => a.indexOf(v) === i) // Unique
+        .filter((v, i, a) => a.indexOf(v) === i)
         .sort((a, b) => {
-            // Sort high to low
             const va = parseInt(a) || 9999;
             const vb = parseInt(b) || 9999;
             return vb - va;
         });
 
+    // Helpers
+    const formatViews = (views) => {
+        if (views >= 1000000) return (views / 1000000).toFixed(1) + 'M';
+        if (views >= 1000) return (views / 1000).toFixed(1) + 'K';
+        return views;
+    };
+
+    const timeAgo = (dateStr) => {
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diff = Math.floor((now - date) / 1000);
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return Math.floor(diff / 60) + ' minutes ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + ' hours ago';
+        if (diff < 2592000) return Math.floor(diff / 86400) + ' days ago';
+        if (diff < 31536000) return Math.floor(diff / 2592000) + ' months ago';
+        return Math.floor(diff / 31536000) + ' years ago';
+    };
+
     if (loading) {
         return (
-            <div className="min-h-screen bg-[#1a1a1a] flex items-center justify-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-red-600"></div>
+            <div className="min-h-screen bg-[#0f0f0f] flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
             </div>
         );
     }
 
     if (!video) {
         return (
-            <div className="min-h-screen bg-[#1a1a1a] flex flex-col items-center justify-center text-white">
+            <div className="min-h-screen bg-[#0f0f0f] flex flex-col items-center justify-center text-white">
                 <h2 className="text-2xl font-bold mb-4">Video not found</h2>
-                <Link to="/" className="text-red-500 hover:text-red-400">Back to Home</Link>
+                <Link to="/" className="text-blue-500 hover:text-blue-400">Back to Home</Link>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-[#1a1a1a] text-white w-full overflow-x-hidden">
-            {/* Navbar */}
-            <nav className="sticky top-0 z-50 bg-[#242424] border-b border-gray-800 px-4 py-3 flex items-center justify-between">
-                <Link to="/" className="flex items-center space-x-2">
-                    <h1 className="text-xl font-bold tracking-tighter text-red-600">
-                        STREAM<span className="text-white">PLATFORM</span>
-                    </h1>
-                </Link>
-                <div className="flex items-center gap-3">
+        <div className="min-h-screen w-full bg-[#0f0f0f] text-white">
+            {/* ─── YouTube-Style Navbar ─── */}
+            <nav className="fixed top-0 left-0 right-0 z-50 bg-[#0f0f0f] h-14 px-4 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <button
+                        onClick={() => setSidebarOpen(true)}
+                        className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                    >
+                        <Menu className="w-5 h-5 text-white" />
+                    </button>
+                    <Link to="/" className="flex items-center gap-0.5">
+                        <svg className="w-8 h-8 text-red-600" viewBox="0 0 90 20" fill="currentColor">
+                            <path d="M27.973 3.123A3.5 3.5 0 0 0 25.5 2H4.5A3.5 3.5 0 0 0 1 5.5v9A3.5 3.5 0 0 0 4.5 18h21a3.5 3.5 0 0 0 3.5-3.5v-9c0-.97-.395-1.841-1.027-2.377zM12 14V6l5.5 4L12 14z" />
+                        </svg>
+                        <span className="text-xl font-semibold tracking-tighter hidden sm:inline">
+                            Stream<span className="font-light">Platform</span>
+                        </span>
+                    </Link>
+                </div>
+
+                <div className="flex-1 max-w-xl mx-4 hidden md:flex items-center">
+                    <div className="flex flex-1">
+                        <input
+                            type="text"
+                            placeholder="Search"
+                            className="w-full bg-[#121212] border border-gray-700 rounded-l-full py-2 pl-4 pr-4 focus:outline-none focus:border-blue-500 text-sm"
+                        />
+                        <button className="bg-[#222222] border border-l-0 border-gray-700 px-5 rounded-r-full hover:bg-[#333333] transition-colors">
+                            <Search className="w-5 h-5 text-gray-400" />
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2">
                     {isAuthenticated ? (
                         <>
-                            <span className="text-sm text-gray-300 hidden md:block">
-                                {user?.display_name || user?.username}
-                            </span>
+                            <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                                <Bell className="w-5 h-5 text-white" />
+                            </button>
                             <button
                                 onClick={logout}
-                                className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-4 py-1.5 rounded-full text-sm font-medium transition-colors"
+                                className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-sm font-medium"
                             >
-                                <LogOut size={16} />
-                                Logout
+                                {user?.display_name?.charAt(0).toUpperCase() || 'U'}
                             </button>
                         </>
                     ) : (
                         <Link
                             to="/auth"
-                            className="bg-red-600 hover:bg-red-700 text-white px-4 py-1.5 rounded-full text-sm font-medium transition-colors"
+                            className="flex items-center gap-2 py-1.5 px-3 border border-gray-600 rounded-full hover:bg-blue-500/10 hover:border-blue-500 transition-colors"
                         >
-                            Sign In
+                            <User className="w-5 h-5 text-blue-500" />
+                            <span className="text-sm font-medium text-blue-500">Sign in</span>
                         </Link>
                     )}
                 </div>
             </nav>
 
-            <div className="w-full max-w-[1600px] mx-auto p-3 lg:p-6 grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-8">
-                {/* Main Content: Player + Info */}
-                <div className="lg:col-span-2 space-y-6">
-                    {/* Player Container */}
-                    <div>
-                        <div className="aspect-video bg-black rounded-xl overflow-hidden shadow-2xl relative">
+            {/* ─── Sidebar Overlay ─── */}
+            <Sidebar
+                isOpen={sidebarOpen}
+                categories={categories}
+                onClose={() => setSidebarOpen(false)}
+                isOverlay={true}
+            />
+
+            {/* ─── Main Content ─── */}
+            <div className="pt-14 w-full lg:max-w-[1700px] lg:mx-auto flex flex-col lg:flex-row gap-0 lg:gap-8 lg:pt-4">
+
+                {/* ═══ LEFT COLUMN: Player + Info ═══ */}
+                <div className="w-full flex-1 min-w-0">
+
+                    {/* ─── Video Player (sticky on mobile) ─── */}
+                    <div className="sticky top-14 z-40 lg:static bg-[#0f0f0f]">
+                        <div className="w-full aspect-video bg-black overflow-hidden relative lg:rounded-xl">
                             {activeSource ? (
                                 activeSource.provider === 'local' || activeSource.provider === 'telegram' ? (
                                     <>
@@ -366,9 +376,6 @@ const VideoDetails = () => {
                                             onError={() => setPlaybackError(true)}
                                             onPlay={() => setAdOverlayVisible(false)}
                                         >
-                                            {(activeSource.provider === 'telegram') && (
-                                                <p className="text-white p-4 text-center">Telegram playback requires client-side handling or proxy. (Implementation pending)</p>
-                                            )}
                                             Your browser does not support the video tag.
                                         </video>
 
@@ -378,8 +385,8 @@ const VideoDetails = () => {
                                                 className="absolute inset-0 z-20 cursor-pointer flex items-center justify-center bg-black/50 hover:bg-black/40 transition-colors group"
                                                 onClick={handleAdClick}
                                             >
-                                                <div className="w-20 h-20 bg-red-600 rounded-full flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
-                                                    <svg className="w-10 h-10 text-white fill-current ml-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                                                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-red-600 rounded-full flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
+                                                    <svg className="w-8 h-8 sm:w-10 sm:h-10 text-white fill-current ml-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                                                 </div>
                                             </div>
                                         )}
@@ -388,13 +395,13 @@ const VideoDetails = () => {
                                         {playbackError && (
                                             <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-10">
                                                 <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
-                                                <p className="text-white font-medium mb-4">Video failed to load or timed out.</p>
+                                                <p className="text-white font-medium mb-4">Video failed to load</p>
                                                 <button
                                                     onClick={handleReloadVideo}
-                                                    className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-full font-bold transition-colors flex items-center gap-2"
+                                                    className="bg-white text-black px-6 py-2 rounded-full font-medium text-sm hover:bg-gray-200 transition-colors flex items-center gap-2"
                                                 >
                                                     <RefreshCw className="w-4 h-4" />
-                                                    Reload Video
+                                                    Retry
                                                 </button>
                                             </div>
                                         )}
@@ -416,200 +423,268 @@ const VideoDetails = () => {
                                 </div>
                             )}
                         </div>
+                    </div>
 
-                        {/* Server & Quality Controls */}
-                        <div className="flex flex-wrap items-center justify-between mt-4 gap-4">
-                            {/* Server Selector */}
-                            <div className="flex items-center space-x-2 overflow-x-auto pb-2">
-                                <span className="text-sm font-medium text-gray-400 whitespace-nowrap">Server:</span>
-                                {distinctProviders.map((provider, idx) => (
-                                    <button
-                                        key={provider}
-                                        onClick={() => handleServerChange(provider)}
-                                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${activeSource?.provider === provider
-                                            ? 'bg-red-600 text-white'
-                                            : 'bg-[#333] hover:bg-[#444] text-gray-300'
-                                            }`}
-                                    >
-                                        Server {idx + 1} ({provider})
-                                    </button>
-                                ))}
+                    {/* ─── Responsive Ad unit (Strictly Above Title) ─── */}
+                    <div className="w-full px-4 lg:px-0 mt-3 mb-1 flex justify-center overflow-hidden">
+                        <div ref={(el) => {
+                            if (el && !el.dataset.adLoaded) {
+                                el.dataset.adLoaded = 'true';
+                                const isMobile = window.innerWidth < 468;
+                                const adWidth = isMobile ? 320 : 468;
+                                const adHeight = isMobile ? 50 : 60;
+                                const configScript = document.createElement('script');
+                                configScript.text = `atOptions = {'key':'92ddfa4ed8b775183e950459a641f268','format':'iframe','height':${adHeight},'width':${adWidth},'params':{}};`;
+                                el.appendChild(configScript);
+                                const invokeScript = document.createElement('script');
+                                invokeScript.src = 'https://www.highperformanceformat.com/92ddfa4ed8b775183e950459a641f268/invoke.js';
+                                el.appendChild(invokeScript);
+                            }
+                        }} className="min-h-[50px] sm:min-h-[60px] w-full flex justify-center" />
+                    </div>
 
+                    {/* ─── Video Title & Controls Row ─── */}
+                    <div className="w-full px-4 lg:px-0 mt-3">
+                        <div className="flex items-start justify-between gap-4">
+                            <h1 className="text-[18px] sm:text-xl font-bold leading-tight break-words flex-1">
+                                {video.title}
+                            </h1>
+
+                            {/* Technical Controls (Settings Menu) */}
+                            <div className="relative flex-shrink-0">
                                 <button
-                                    onClick={handleManualRefresh}
-                                    title="Refresh Servers"
-                                    className="p-1.5 bg-[#333] hover:bg-[#444] rounded-lg text-gray-400 hover:text-white transition-colors"
+                                    onClick={() => setShowQualityMenu(!showQualityMenu)}
+                                    className="p-2 hover:bg-white/10 rounded-full transition-colors text-white"
+                                    title="Source & Quality Settings"
                                 >
-                                    <RefreshCw className="w-4 h-4" />
+                                    <Settings className={`w-5 h-5 ${showQualityMenu ? 'animate-spin-slow' : ''}`} />
                                 </button>
 
-                                {isProcessing && (
-                                    <div className="flex items-center space-x-2 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full text-blue-400 text-xs font-medium animate-pulse">
-                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div>
-                                        <span>Processing qualities & servers...</span>
+                                {showQualityMenu && (
+                                    <div className="absolute top-full right-0 mt-2 bg-[#212121] border border-gray-700 rounded-xl shadow-2xl overflow-hidden min-w-[200px] z-[60]">
+                                        {/* Servers */}
+                                        <div className="px-3 py-2 border-b border-gray-700 text-[10px] text-gray-400 font-bold uppercase tracking-wider bg-white/5">
+                                            Select Server
+                                        </div>
+                                        <div className="py-1 border-b border-gray-700">
+                                            {distinctProviders.map((provider, idx) => (
+                                                <button
+                                                    key={provider}
+                                                    onClick={() => { handleServerChange(provider); }}
+                                                    className={`w-full px-3 py-2 text-left text-xs hover:bg-white/10 transition-colors flex items-center justify-between ${activeSource?.provider === provider ? 'text-blue-400' : 'text-gray-300'}`}
+                                                >
+                                                    <span>Server {idx + 1} ({provider})</span>
+                                                    {activeSource?.provider === provider && <div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div>}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {/* Quality */}
+                                        {currentProviderResolutions.length > 1 && (
+                                            <>
+                                                <div className="px-3 py-2 border-b border-gray-700 text-[10px] text-gray-400 font-bold uppercase tracking-wider bg-white/5">
+                                                    Select Quality
+                                                </div>
+                                                <div className="py-1">
+                                                    {currentProviderResolutions.map((res) => (
+                                                        <button
+                                                            key={res}
+                                                            onClick={() => { handleQualityChange(res); setShowQualityMenu(false); }}
+                                                            className={`w-full px-3 py-2 text-left text-xs hover:bg-white/10 transition-colors flex items-center justify-between ${currentResolution === res ? 'text-blue-400' : 'text-gray-300'}`}
+                                                        >
+                                                            <span>{res}</span>
+                                                            {currentResolution === res && <div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div>}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        )}
+
+                                        <div className="p-1">
+                                            <button
+                                                onClick={() => { handleManualRefresh(); setShowQualityMenu(false); }}
+                                                className="w-full flex items-center gap-2 px-3 py-2 text-[10px] text-gray-500 hover:text-white transition-colors"
+                                            >
+                                                <RefreshCw className="w-3 h-3" />
+                                                Refresh Sources
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
                             </div>
-
-                            {/* Quality Selector (Always shown if resolutions exist) */}
-                            {currentProviderResolutions.length > 1 && (
-                                <div className="relative">
-                                    <button
-                                        onClick={() => setShowQualityMenu(!showQualityMenu)}
-                                        className="flex items-center space-x-2 bg-[#333] hover:bg-[#444] px-4 py-2 rounded-lg text-sm font-medium transition-colors text-white border border-gray-600"
-                                    >
-                                        <Settings className="w-4 h-4" />
-                                        <span>Quality: {currentResolution}</span>
-                                    </button>
-
-                                    {showQualityMenu && (
-                                        <div className="absolute bottom-full right-0 mb-2 bg-[#1a1a1a] border border-gray-600 rounded-lg shadow-2xl overflow-hidden min-w-[160px] z-50">
-                                            <div className="px-4 py-2 border-b border-gray-700 text-xs text-gray-400 font-medium uppercase tracking-wide">
-                                                Select Quality
-                                            </div>
-                                            <div className="py-1">
-                                                {currentProviderResolutions.map((res) => (
-                                                    <button
-                                                        key={res}
-                                                        onClick={() => handleQualityChange(res)}
-                                                        className={`w-full px-4 py-3 text-left text-sm hover:bg-white/10 transition-colors flex items-center justify-between ${currentResolution === res
-                                                            ? 'text-red-500 font-medium bg-red-500/10'
-                                                            : 'text-white'
-                                                            }`}
-                                                    >
-                                                        <span>{res}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
                         </div>
                     </div>
 
-                    {/* Video Info */}
-                    <div>
-                        <h1 className="text-xl md:text-2xl font-bold mb-2 break-words leading-tight">{video.title}</h1>
-
-                        <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-gray-800 gap-4">
-                            <div className="flex items-center space-x-4 text-sm text-gray-400">
-                                <div className="flex items-center">
-                                    <Eye className="w-4 h-4 mr-1.5" />
-                                    <span>{video.views.toLocaleString()} views</span>
-                                </div>
-                                <div className="flex items-center">
-                                    <Calendar className="w-4 h-4 mr-1.5" />
-                                    <span>{new Date(video.upload_date).toLocaleDateString()}</span>
-                                </div>
-                                {video.original_resolution && (
-                                    <span className="bg-red-600/20 text-red-400 px-2 py-0.5 rounded text-xs font-medium">
-                                        {video.original_resolution}
-                                    </span>
-                                )}
-                            </div>
-
-                            <div className="flex items-center space-x-4">
-                                <LikeButton videoId={video.id} />
-                                <button
-                                    onClick={() => navigator.share?.({ title: video.title, url: window.location.href }) || navigator.clipboard.writeText(window.location.href)}
-                                    className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full text-sm font-medium transition-colors"
-                                >
-                                    <Share2 className="w-4 h-4" />
-                                    <span>Share</span>
-                                </button>
-                                <button
-                                    onClick={() => isAuthenticated ? setShowPlaylistModal(true) : alert("Please login to save")}
-                                    className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full text-sm font-medium transition-colors"
-                                >
-                                    <ListPlus className="w-4 h-4" />
-                                    <span>Save</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Description & Channel */}
-                        {/* Description & Channel */}
-                        <div className="mt-6 flex space-x-4">
-                            {/* Avatar */}
-                            {video.uploader?.avatar_url ? (
-                                <img
-                                    src={video.uploader.avatar_url}
-                                    className="w-12 h-12 rounded-full object-cover flex-shrink-0"
-                                    alt="Uploader"
-                                />
-                            ) : (
-                                <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center font-bold text-lg flex-shrink-0 uppercase text-white">
-                                    {(video.uploader?.display_name || video.uploader?.username || "U")[0]}
-                                </div>
-                            )}
-
-                            <div className="flex-1">
-                                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                                    <div>
-                                        <h3 className="font-bold text-lg">
-                                            {video.uploader?.display_name || video.uploader?.username || "Unknown User"}
-                                        </h3>
-                                        <div className="mt-1">
-                                            <SubscribeButton channelId={video.uploader_id || video.uploader?.id} />
-                                        </div>
+                    {/* ─── Channel Information & Subscribe Row ─── */}
+                    <div className="w-full px-4 lg:px-0 mt-3 flex items-center justify-between">
+                        <div className="flex items-center gap-3 min-w-0">
+                            <Link to="#" className="flex-shrink-0">
+                                {video.uploader?.avatar_url ? (
+                                    <img
+                                        src={video.uploader.avatar_url}
+                                        className="w-9 h-9 sm:w-10 sm:h-10 rounded-full object-cover"
+                                        alt="Channel"
+                                    />
+                                ) : (
+                                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-purple-600 flex items-center justify-center font-bold text-sm uppercase text-white leading-none">
+                                        {(video.uploader?.display_name || video.uploader?.username || "U")[0]}
                                     </div>
-                                </div>
+                                )}
+                            </Link>
 
-                                <div className="bg-[#242424] p-4 rounded-xl text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
-                                    <p className="font-medium text-white mb-2">Category: <span className="text-red-500">{video.category?.name}</span></p>
-                                    <p className="break-words">{video.description || "No description provided for this video."}</p>
-                                </div>
+                            <div className="min-w-0">
+                                <h3 className="font-bold text-sm sm:text-[15px] leading-tight truncate">
+                                    {video.uploader?.display_name || video.uploader?.username || "Unknown"}
+                                </h3>
+                                <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5 leading-tight">Uploader</p>
                             </div>
                         </div>
 
-                        {/* Comments Section */}
+                        <div className="flex-shrink-0">
+                            <SubscribeButton channelId={video.uploader_id || video.uploader?.id} />
+                        </div>
+                    </div>
+
+                    {/* ─── Action Buttons Row (Pills) ─── */}
+                    <div className="w-full px-4 lg:px-0 mt-4 flex items-center gap-2 overflow-x-auto scrollbar-hide">
+                        <div className="flex items-center bg-[#272727] rounded-full overflow-hidden flex-shrink-0">
+                            <LikeButton videoId={video.id} />
+                        </div>
+
+                        <button
+                            onClick={() => navigator.share?.({ title: video.title, url: window.location.href }) || navigator.clipboard.writeText(window.location.href)}
+                            className="flex items-center gap-2 bg-[#272727] hover:bg-[#3a3a3a] px-4 py-2 rounded-full text-sm font-medium transition-colors flex-shrink-0"
+                        >
+                            <Share2 className="w-4 h-4" />
+                            <span>Share</span>
+                        </button>
+
+                        <button
+                            onClick={() => isAuthenticated ? setShowPlaylistModal(true) : alert("Please login to save")}
+                            className="flex items-center gap-2 bg-[#272727] hover:bg-[#3a3a3a] px-4 py-2 rounded-full text-sm font-medium transition-colors flex-shrink-0"
+                        >
+                            <ListPlus className="w-4 h-4" />
+                            <span>Save</span>
+                        </button>
+
+                        <button className="flex items-center justify-center bg-[#272727] hover:bg-[#3a3a3a] w-9 h-9 rounded-full transition-colors flex-shrink-0">
+                            <MoreHorizontal className="w-4 h-4" />
+                        </button>
+                    </div>
+
+                    {/* ─── Description Box ─── */}
+                    <div className="w-full px-4 lg:px-0 mt-4">
+                        <div
+                            className="bg-[#272727] hover:bg-[#3a3a3a] rounded-xl p-3 cursor-pointer transition-colors"
+                            onClick={() => setDescExpanded(!descExpanded)}
+                        >
+                            <div className="flex items-center gap-2 text-sm font-bold">
+                                <span>{formatViews(video.views)} views</span>
+                                <span>{timeAgo(video.upload_date)}</span>
+                            </div>
+                            <div className={`text-sm mt-1 whitespace-pre-wrap ${!descExpanded ? 'line-clamp-2' : ''}`}>
+                                {video.description || "No description provided for this video."}
+                            </div>
+                            <button className="text-sm font-bold mt-1 text-gray-400">
+                                {descExpanded ? 'Show less' : '...more'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* ─── Comments Section ─── */}
+                    <div className="w-full mt-6">
                         <CommentSection videoId={video.id} />
+                    </div>
+
+                    {/* ─── Related Videos (Mobile Only) ─── */}
+                    <div className="lg:hidden px-4 mt-6 flex flex-col gap-4">
+                        <h3 className="text-base font-bold">Related Videos</h3>
+                        <div className="flex flex-col gap-3">
+                            {relatedVideos.map(vid => (
+                                <VideoCard key={vid.id} video={vid} />
+                            ))}
+                        </div>
                     </div>
                 </div>
 
-                {/* Sidebar: Related Videos */}
-                <div className="lg:col-span-1">
-                    <AdBanner format="square" />
-                    <h3 className="text-lg font-bold mb-4 mt-6">Up Next</h3>
-                    <div className="flex flex-col space-y-4">
+                {/* ═══ RIGHT COLUMN: Sidebar (Desktop Only) ═══ */}
+                <div className="hidden lg:block w-[402px] flex-shrink-0 pt-0 pr-4">
+                    {/* Sidebar Ad */}
+                    <div className="mb-4">
+                        <AdBanner format="square" className="my-0" />
+                    </div>
+
+                    <h3 className="text-base font-bold mb-3">Up next</h3>
+                    <div className="flex flex-col gap-2">
                         {relatedVideos.map(vid => (
-                            <div key={vid.id} className="group flex gap-3 cursor-pointer hover:bg-white/5 p-2 rounded-lg transition-colors w-full overflow-hidden">
-                                <Link to={`/video/${vid.id}`} className="flex-shrink-0 w-32 md:w-36 relative aspect-video bg-gray-800 rounded-lg overflow-hidden">
-                                    <img src={vid.thumbnail_url} alt={vid.title} className="w-full h-full object-cover" loading="lazy" />
-                                    <span className="absolute bottom-1 right-1 bg-black/80 text-white text-[10px] px-1 rounded">
-                                        {new Date(vid.duration * 1000).toISOString().substr(14, 5)}
-                                    </span>
-                                </Link>
-                                <div className="flex flex-col flex-1 min-w-0">
-                                    <Link to={`/video/${vid.id}`}>
-                                        <h4 className="font-semibold text-sm line-clamp-2 title-font group-hover:text-red-500 transition-colors">
-                                            {vid.title}
-                                        </h4>
-                                    </Link>
-                                    <p className="text-gray-400 text-xs mt-1">StreamPlatform</p>
-                                    <div className="flex items-center text-gray-500 text-xs mt-1 space-x-2">
-                                        <span>{vid.views > 1000 ? (vid.views / 1000).toFixed(1) + 'K' : vid.views} views</span>
-                                        <span>•</span>
-                                        <span>{new Date(vid.upload_date).toLocaleDateString()}</span>
-                                    </div>
-                                </div>
-                            </div>
+                            <RelatedVideoItem key={vid.id} vid={vid} />
                         ))}
                     </div>
                 </div>
             </div>
 
             {/* Playlist Modal */}
-            {
-                showPlaylistModal && (
-                    <AddToPlaylist
-                        videoId={video.id}
-                        onClose={() => setShowPlaylistModal(false)}
-                    />
-                )
-            }
-        </div >
+            {showPlaylistModal && (
+                <AddToPlaylist
+                    videoId={video.id}
+                    onClose={() => setShowPlaylistModal(false)}
+                />
+            )}
+        </div>
+    );
+};
+
+/* ─── Related Video Item Component (YouTube-style) ─── */
+const RelatedVideoItem = ({ vid }) => {
+    const formatDuration = (seconds) => {
+        if (!seconds) return '0:00';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        return `${m}:${s.toString().padStart(2, '0')}`;
+    };
+
+    const formatViews = (views) => {
+        if (views >= 1000000) return (views / 1000000).toFixed(1) + 'M views';
+        if (views >= 1000) return (views / 1000).toFixed(1) + 'K views';
+        return views + ' views';
+    };
+
+    const timeAgo = (dateStr) => {
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diff = Math.floor((now - date) / 1000);
+        if (diff < 3600) return Math.floor(diff / 60) + ' min ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + ' hours ago';
+        if (diff < 2592000) return Math.floor(diff / 86400) + ' days ago';
+        if (diff < 31536000) return Math.floor(diff / 2592000) + ' months ago';
+        return Math.floor(diff / 31536000) + ' years ago';
+    };
+
+    return (
+        <Link to={`/video/${vid.id}`} className="flex gap-2 group">
+            {/* Thumbnail */}
+            <div className="relative flex-shrink-0 w-[168px] aspect-video bg-gray-800 rounded-lg overflow-hidden">
+                <img src={vid.thumbnail_url} alt={vid.title} className="w-full h-full object-cover" loading="lazy" />
+                <span className="absolute bottom-1 right-1 bg-black/80 text-white text-[11px] font-medium px-1 rounded">
+                    {formatDuration(vid.duration)}
+                </span>
+            </div>
+
+            {/* Info */}
+            <div className="flex-1 min-w-0 pt-0.5">
+                <h4 className="font-medium text-sm leading-tight line-clamp-2 group-hover:text-white transition-colors">
+                    {vid.title}
+                </h4>
+                <p className="text-xs text-gray-400 mt-1.5 leading-tight truncate">
+                    {vid.uploader?.display_name || vid.uploader?.username || 'StreamPlatform'}
+                </p>
+                <p className="text-xs text-gray-400 leading-tight">
+                    {formatViews(vid.views)} • {timeAgo(vid.upload_date)}
+                </p>
+            </div>
+        </Link>
     );
 };
 
