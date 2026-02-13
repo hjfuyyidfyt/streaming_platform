@@ -91,7 +91,7 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
     if (!isOpen) {
         // Collapsed mini sidebar - Hidden on mobile, visible on desktop
         return (
-            <aside className="hidden lg:flex flex-col items-center w-[72px] h-[calc(100vh-56px)] overflow-y-auto sticky top-14 bg-[#0f0f0f] py-3">
+            <aside className="hidden lg:flex flex-col items-center w-[72px] h-[calc(100vh-56px)] overflow-y-auto fixed top-14 left-0 z-40 bg-[#0f0f0f] py-3">
                 {mainItems.slice(0, 4).map(item => (
                     <Link
                         key={item.path}
@@ -118,10 +118,9 @@ const Sidebar = ({ isOpen = true, categories = [], onClose = () => { } }) => {
 
             <aside className={`
                 w-60 h-[calc(100vh-56px)] overflow-y-auto bg-[#0f0f0f] scrollbar-thin scrollbar-thumb-gray-700
-                fixed lg:sticky top-14 left-0 z-50 lg:z-0
+                fixed top-14 left-0 z-40
                 transition-transform duration-300 ease-in-out
-                ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-                lg:block
+                ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-[72px]'} 
             `}>
                 <div className="py-3 px-2">
                     {/* Main Navigation */}

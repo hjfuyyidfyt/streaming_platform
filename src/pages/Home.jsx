@@ -207,7 +207,7 @@ const Home = () => {
                 />
 
                 {/* Main Content */}
-                <main className="flex-1 p-4 lg:p-6 min-w-0">
+                <main className={`flex-1 p-4 lg:p-6 min-w-0 transition-all duration-300 ${sidebarOpen ? 'lg:ml-60' : 'lg:ml-[72px]'}`}>
 
                     {/* Mobile Categories (Horizontal Scroll) */}
                     <div className="lg:hidden flex overflow-x-auto pb-4 gap-2 mb-4 scrollbar-hide">

@@ -18,9 +18,12 @@ import Subscriptions from './pages/Subscriptions';
 import Playlists from './pages/Playlists';
 import PlaylistDetails from './pages/PlaylistDetails';
 
+import GlobalAdController from './components/layout/GlobalAdController.jsx';
+
 function App() {
   return (
     <AuthProvider>
+      <GlobalAdController />
       <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route path="/" element={<Home />} />
