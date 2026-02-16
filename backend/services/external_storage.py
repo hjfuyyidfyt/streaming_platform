@@ -1,9 +1,18 @@
 import os
+import re
 import httpx
 import logging
 import mimetypes
-from typing import Union
+from typing import Union, Optional
 from fastapi import UploadFile, HTTPException
+
+def _sanitize_filename(title: str) -> str:
+    """Sanitize title for use as a filename."""
+    # Remove characters not safe for filenames
+    clean = re.sub(r'[<>:"/\\|?*]', '', title)
+    # Replace multiple spaces/underscores with single underscore
+    clean = re.sub(r'[\s_]+', '_', clean.strip())
+    return clean[:200]  # Limit length
 
 logger = logging.getLogger(__name__)
 # Add file handler
@@ -17,7 +26,7 @@ logger.setLevel(logging.DEBUG)
 STREAMTAPE_BASE = "https://api.streamtape.com"
 DOODSTREAM_BASE = "https://doodapi.co/api"
 
-async def upload_to_streamtape(file: Union[UploadFile, str]) -> dict:
+async def upload_to_streamtape(file: Union[UploadFile, str], title: Optional[str] = None) -> dict:
     login = os.getenv("STREAMTAPE_API_LOGIN")
     key = os.getenv("STREAMTAPE_API_KEY")
     
@@ -30,7 +39,8 @@ async def upload_to_streamtape(file: Union[UploadFile, str]) -> dict:
     should_close = False
 
     if isinstance(file, str):
-        filename = os.path.basename(file)
+        ext = os.path.splitext(file)[1] or '.mp4'
+        filename = f"{_sanitize_filename(title)}{ext}" if title else os.path.basename(file)
         content_type = mimetypes.guess_type(file)[0] or "video/mp4"
         file_obj = open(file, "rb")
         should_close = True
@@ -82,7 +92,7 @@ async def upload_to_streamtape(file: Union[UploadFile, str]) -> dict:
             file_obj.close()
             
 
-async def upload_to_doodstream(file: Union[UploadFile, str]) -> dict:
+async def upload_to_doodstream(file: Union[UploadFile, str], title: Optional[str] = None) -> dict:
     key = os.getenv("DOODSTREAM_API_KEY")
     logger.info(f"DoodStream Upload Start: Key Loaded? {bool(key)}")
     if not key:
@@ -94,7 +104,8 @@ async def upload_to_doodstream(file: Union[UploadFile, str]) -> dict:
     should_close = False
 
     if isinstance(file, str):
-        filename = os.path.basename(file)
+        ext = os.path.splitext(file)[1] or '.mp4'
+        filename = f"{_sanitize_filename(title)}{ext}" if title else os.path.basename(file)
         content_type = mimetypes.guess_type(file)[0] or "video/mp4"
         file_obj = open(file, "rb")
         should_close = True

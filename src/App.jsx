@@ -17,17 +17,21 @@ import History from './pages/History';
 import Subscriptions from './pages/Subscriptions';
 import Playlists from './pages/Playlists';
 import PlaylistDetails from './pages/PlaylistDetails';
+import Shorts from './pages/Shorts';
 
 import GlobalAdController from './components/layout/GlobalAdController.jsx';
+import AgeVerification from './components/common/AgeVerification.jsx';
 
 function App() {
   return (
     <AuthProvider>
-      <GlobalAdController />
+      <AgeVerification />
       <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <GlobalAdController />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/video/:id" element={<VideoDetails />} />
+          <Route path="/shorts" element={<Shorts />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/your-videos" element={<YourVideos />} />
           <Route path="/history" element={

@@ -37,6 +37,45 @@ async def search_videos(
     videos = session.exec(statement).all()
     return videos
 
+@router.get("/shorts", response_model=List[VideoPublic])
+async def read_shorts(
+    skip: int = 0,
+    limit: int = 20,
+    session: Session = Depends(get_session)
+):
+    videos = session.exec(
+        select(Video)
+        .where(Video.is_short == True)
+        .options(joinedload(Video.category), joinedload(Video.uploader))
+        .offset(skip).limit(limit)
+    ).all()
+    return videos
+
+@router.get("/categories/all", response_model=List[CategoryPublic])
+async def read_categories(session: Session = Depends(get_session)):
+    categories = session.exec(select(Category)).all()
+    return categories
+
+@router.get("/category/{slug}", response_model=List[VideoPublic])
+async def read_videos_by_category(
+    slug: str,
+    skip: int = 0,
+    limit: int = 20,
+    session: Session = Depends(get_session)
+):
+    # First find category by slug
+    category = session.exec(select(Category).where(Category.slug == slug)).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    videos = session.exec(
+        select(Video)
+        .where(Video.category_id == category.id)
+        .options(joinedload(Video.category), joinedload(Video.uploader))
+        .offset(skip).limit(limit)
+    ).all()
+    return videos
+
 @router.get("/{video_id}", response_model=VideoPublic)
 async def read_video(video_id: int, session: Session = Depends(get_session)):
     video = session.exec(
@@ -44,8 +83,6 @@ async def read_video(video_id: int, session: Session = Depends(get_session)):
     ).first()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
-    return video
-
     return video
 
 @router.post("/{video_id}/view")
@@ -72,29 +109,3 @@ async def increment_view(
     
     session.commit()
     return {"status": "success", "views": video.views}
-
-@router.get("/category/{slug}", response_model=List[VideoPublic])
-async def read_videos_by_category(
-    slug: str,
-    skip: int = 0,
-    limit: int = 20,
-    session: Session = Depends(get_session)
-):
-    # First find category by slug
-    category = session.exec(select(Category).where(Category.slug == slug)).first()
-    if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
-    
-    videos = session.exec(
-        select(Video)
-        .where(Video.category_id == category.id)
-        .options(joinedload(Video.category), joinedload(Video.uploader))
-        .offset(skip).limit(limit)
-    ).all()
-    return videos
-
-# Category Endpoints
-@router.get("/categories/all", response_model=List[CategoryPublic])
-async def read_categories(session: Session = Depends(get_session)):
-    categories = session.exec(select(Category)).all()
-    return categories

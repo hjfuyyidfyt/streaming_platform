@@ -1,3 +1,4 @@
+import axios from 'axios';
 export const API_URL = import.meta.env.PROD ? '' : 'http://localhost:8000';
 
 // Helper to get auth headers
@@ -73,6 +74,7 @@ export const api = {
     searchVideos: (query, skip = 0, limit = 20) => api.get(`/videos/search?q=${encodeURIComponent(query)}&skip=${skip}&limit=${limit}`),
     getVideosByCategory: (slug, skip = 0, limit = 20) => api.get(`/videos/category/${slug}?skip=${skip}&limit=${limit}`),
     getVideo: (id) => api.get(`/videos/${id}`),
+    getShorts: (skip = 0, limit = 20) => api.get(`/videos/shorts?skip=${skip}&limit=${limit}`),
 
     // Categories
     getCategories: () => api.get(`/videos/categories/all`),
@@ -179,18 +181,28 @@ export const api = {
 
     getUserVideos: (userId) => api.get(`/upload/user/${userId}/videos`),
 
-    uploadVideo: async (formData) => {
+    uploadVideo: async (formData, onProgress = null) => {
         const token = localStorage.getItem('token');
-        const response = await fetch(`${API_URL}/upload/video`, {
-            method: 'POST',
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-            body: formData
+        const response = await axios.post(`${API_URL}/upload/video`, formData, {
+            headers: {
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                'Content-Type': 'multipart/form-data'
+            },
+            onUploadProgress: (progressEvent) => {
+                if (onProgress) {
+                    const total = progressEvent.total || 0;
+                    const loaded = progressEvent.loaded || 0;
+                    const percentCompleted = total > 0 ? Math.round((loaded * 100) / total) : 0;
+
+                    onProgress({
+                        loaded: loaded,
+                        total: total,
+                        percent: percentCompleted
+                    });
+                }
+            }
         });
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.detail || 'Upload failed');
-        }
-        return response.json();
+        return response.data;
     },
 
     deleteVideo: async (videoId) => {
@@ -216,4 +228,35 @@ export const api = {
     // ========== ADMIN SETTINGS ==========
     getSystemSettings: (token) => api.get('/admin/settings', token),
     updateSystemSettings: (settings, token) => api.post('/admin/settings', settings, false, token),
+
+    // ========== ADMIN VIDEO MANAGEMENT ==========
+    adminListVideos: (token, skip = 0, limit = 20) => api.get(`/admin/videos?skip=${skip}&limit=${limit}`, token),
+    adminDeleteVideo: async (videoId, token, provider = null, quality = null) => {
+        let url = `${API_URL}/admin/video/${videoId}`;
+        const params = [];
+        if (provider) params.push(`provider=${provider}`);
+        if (quality) params.push(`quality=${quality}`);
+        if (params.length) url += '?' + params.join('&');
+        const response = await fetch(url, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || 'Delete failed');
+        }
+        return response.json();
+    },
+    adminDeleteAllVideos: async (token) => {
+        const response = await fetch(`${API_URL}/admin/videos/all`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || 'Delete all failed');
+        }
+        return response.json();
+    },
+    adminSearchVideos: (query, token, skip = 0, limit = 20) => api.get(`/admin/videos/search?q=${encodeURIComponent(query)}&skip=${skip}&limit=${limit}`, token),
 };

@@ -35,6 +35,7 @@ class VideoBase(SQLModel):
     storage_mode: str = Field(default="local")
     external_id: Optional[str] = None
     embed_url: Optional[str] = None
+    is_short: bool = Field(default=False)
 
 class Video(VideoBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -62,6 +63,7 @@ class VideoPublic(VideoBase):
     category: Optional[CategoryPublic] = None
     uploader: Optional[UserPublic] = None
     sources: List[VideoSourcePublic] = []
+    is_short: bool = False
 
 class VideoSource(SQLModel, table=True):
     """Stores multiple external links for a single video."""

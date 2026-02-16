@@ -186,3 +186,243 @@ async def update_settings(
     # Admin check required
     save_settings(settings)
     return settings
+
+# ============== Admin Video Management ==============
+from ..models import Video, VideoSource, TelegramInfo, VideoResolution, ViewHistory, Comment, CommentLike, VideoLike, WatchHistory, PlaylistItem
+from typing import Optional, List
+from sqlmodel import or_
+
+def _delete_video_references(session, video_id):
+    """Delete all records that reference a video (foreign keys)."""
+    # Delete comments: handle replies (self-referential FK) first
+    comments = session.exec(select(Comment).where(Comment.video_id == video_id)).all()
+    # Separate replies from top-level (delete replies first due to parent_id FK)
+    replies = [c for c in comments if c.parent_id is not None]
+    top_level = [c for c in comments if c.parent_id is None]
+    for c in replies:
+        c_likes = session.exec(select(CommentLike).where(CommentLike.comment_id == c.id)).all()
+        for cl in c_likes:
+            session.delete(cl)
+        session.delete(c)
+    for c in top_level:
+        c_likes = session.exec(select(CommentLike).where(CommentLike.comment_id == c.id)).all()
+        for cl in c_likes:
+            session.delete(cl)
+        session.delete(c)
+    # Delete video likes
+    v_likes = session.exec(select(VideoLike).where(VideoLike.video_id == video_id)).all()
+    for vl in v_likes:
+        session.delete(vl)
+    # Delete watch history
+    watches = session.exec(select(WatchHistory).where(WatchHistory.video_id == video_id)).all()
+    for w in watches:
+        session.delete(w)
+    # Delete view history
+    views = session.exec(select(ViewHistory).where(ViewHistory.video_id == video_id)).all()
+    for v in views:
+        session.delete(v)
+    # Delete playlist items
+    items = session.exec(select(PlaylistItem).where(PlaylistItem.video_id == video_id)).all()
+    for item in items:
+        session.delete(item)
+    # Delete video sources
+    sources = session.exec(select(VideoSource).where(VideoSource.video_id == video_id)).all()
+    deleted_sources = []
+    for s in sources:
+        deleted_sources.append(f"{s.provider}/{s.resolution or 'original'}")
+        session.delete(s)
+    # Delete telegram info
+    tg = session.exec(select(TelegramInfo).where(TelegramInfo.video_id == video_id)).first()
+    if tg:
+        session.delete(tg)
+    # Delete resolutions
+    resolutions = session.exec(select(VideoResolution).where(VideoResolution.video_id == video_id)).all()
+    for r in resolutions:
+        session.delete(r)
+    return deleted_sources
+
+
+@router.get("/videos")
+async def admin_list_videos(
+    skip: int = 0,
+    limit: int = 20,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """List all videos with sources for admin."""
+    videos = session.exec(select(Video).offset(skip).limit(limit)).all()
+    result = []
+    for v in videos:
+        sources = session.exec(select(VideoSource).where(VideoSource.video_id == v.id)).all()
+        source_list = [{"id": s.id, "provider": s.provider, "resolution": s.resolution or "original"} for s in sources]
+        result.append({
+            "id": v.id,
+            "title": v.title,
+            "views": v.views,
+            "storage_mode": v.storage_mode,
+            "thumbnail_url": v.thumbnail_url,
+            "sources": source_list,
+            "source_count": len(source_list)
+        })
+    return result
+
+
+@router.get("/videos/search")
+async def admin_search_videos(
+    q: str,
+    skip: int = 0,
+    limit: int = 20,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Search videos by title with fuzzy keyword matching."""
+    keywords = q.strip().split()
+    if not keywords:
+        return []
+    
+    # Build query: each keyword must match title (AND logic)
+    query = select(Video)
+    for kw in keywords:
+        query = query.where(Video.title.ilike(f"%{kw}%"))
+    
+    videos = session.exec(query.offset(skip).limit(limit)).all()
+    result = []
+    for v in videos:
+        sources = session.exec(select(VideoSource).where(VideoSource.video_id == v.id)).all()
+        source_list = [{"id": s.id, "provider": s.provider, "resolution": s.resolution or "original"} for s in sources]
+        result.append({
+            "id": v.id,
+            "title": v.title,
+            "views": v.views,
+            "storage_mode": v.storage_mode,
+            "sources": source_list,
+            "source_count": len(source_list)
+        })
+    return result
+
+
+@router.delete("/video/{video_id}")
+async def admin_delete_video(
+    video_id: int,
+    provider: Optional[str] = None,
+    quality: Optional[str] = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Admin delete video with selective options:
+    - No params: Delete everything (video + all sources + thumbnail + all data)
+    - provider only: Delete sources from that provider only
+    - provider + quality: Delete specific quality from that provider
+    """
+    video = session.get(Video, video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    deleted_sources = []
+
+    if provider and quality:
+        # Delete specific quality from specific provider
+        sources = session.exec(
+            select(VideoSource).where(
+                VideoSource.video_id == video_id,
+                VideoSource.provider == provider,
+                VideoSource.resolution == quality
+            )
+        ).all()
+        for s in sources:
+            deleted_sources.append(f"{s.provider}/{s.resolution or 'original'}")
+            session.delete(s)
+        if provider == "telegram":
+            resolutions = session.exec(
+                select(VideoResolution).where(
+                    VideoResolution.video_id == video_id,
+                    VideoResolution.resolution == quality
+                )
+            ).all()
+            for r in resolutions:
+                session.delete(r)
+        session.commit()
+        remaining = session.exec(select(VideoSource).where(VideoSource.video_id == video_id)).all()
+        return {
+            "status": "success",
+            "mode": "selective",
+            "deleted_sources": deleted_sources,
+            "remaining_sources": len(remaining),
+            "video_deleted": False
+        }
+
+    elif provider:
+        # Delete all sources from specific provider
+        sources = session.exec(
+            select(VideoSource).where(
+                VideoSource.video_id == video_id,
+                VideoSource.provider == provider
+            )
+        ).all()
+        for s in sources:
+            deleted_sources.append(f"{s.provider}/{s.resolution or 'original'}")
+            session.delete(s)
+        if provider == "telegram":
+            tg = session.exec(select(TelegramInfo).where(TelegramInfo.video_id == video_id)).first()
+            if tg:
+                session.delete(tg)
+            resolutions = session.exec(select(VideoResolution).where(VideoResolution.video_id == video_id)).all()
+            for r in resolutions:
+                session.delete(r)
+        session.commit()
+        remaining = session.exec(select(VideoSource).where(VideoSource.video_id == video_id)).all()
+        return {
+            "status": "success",
+            "mode": "provider",
+            "deleted_sources": deleted_sources,
+            "remaining_sources": len(remaining),
+            "video_deleted": False
+        }
+
+    else:
+        # Full delete: remove everything
+        deleted_sources = _delete_video_references(session, video_id)
+        # Delete thumbnail file
+        if video.thumbnail_url:
+            thumb_path = video.thumbnail_url.replace("/thumbnails/", "backend/thumbnails/")
+            if os.path.exists(thumb_path):
+                try:
+                    os.remove(thumb_path)
+                except Exception as e:
+                    logger.error(f"Failed to delete thumbnail: {e}")
+        # Delete video record
+        session.delete(video)
+        session.commit()
+        return {
+            "status": "success",
+            "mode": "full",
+            "deleted_sources": deleted_sources,
+            "remaining_sources": 0,
+            "video_deleted": True
+        }
+
+
+@router.delete("/videos/all")
+async def admin_delete_all_videos(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete ALL videos from the platform. Destructive operation."""
+    videos = session.exec(select(Video)).all()
+    count = len(videos)
+    
+    for video in videos:
+        _delete_video_references(session, video.id)
+        # Clean thumbnail
+        if video.thumbnail_url:
+            thumb_path = video.thumbnail_url.replace("/thumbnails/", "backend/thumbnails/")
+            if os.path.exists(thumb_path):
+                try:
+                    os.remove(thumb_path)
+                except Exception:
+                    pass
+        session.delete(video)
+    
+    session.commit()
+    return {"status": "success", "deleted_count": count}

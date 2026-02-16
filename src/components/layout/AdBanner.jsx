@@ -1,10 +1,16 @@
 import React, { useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 
 const AdBanner = ({ format = "banner", className = "" }) => {
     const bannerRef = useRef(null);
+    const { isAdmin } = useAuth();
+    const location = useLocation();
+
+    const shouldHideAds = isAdmin || location.pathname.startsWith('/admin');
 
     useEffect(() => {
-        if (!bannerRef.current) return;
+        if (shouldHideAds || !bannerRef.current) return;
 
         // Native Banner Implementation
         // Only run if the container is empty or we need to re-inject
@@ -34,6 +40,8 @@ const AdBanner = ({ format = "banner", className = "" }) => {
             default: return 'w-full max-w-[728px] h-[90px]';
         }
     };
+
+    if (shouldHideAds) return null;
 
     return (
         <div className={`flex justify-center my-6 ${className}`}>

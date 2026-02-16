@@ -33,6 +33,11 @@ const YourVideos = () => {
     const [thumbnailFile, setThumbnailFile] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
+    const [uploadMetrics, setUploadMetrics] = useState({
+        speed: 0,
+        uploaded: 0,
+        total: 0
+    });
     const [uploadError, setUploadError] = useState('');
     const [uploadSuccess, setUploadSuccess] = useState(false);
 
@@ -115,14 +120,36 @@ const YourVideos = () => {
                 formData.append('thumbnail', thumbnailFile);
             }
 
-            // Simulate progress
-            const progressInterval = setInterval(() => {
-                setUploadProgress(prev => Math.min(prev + 5, 90));
-            }, 500);
+            let lastLoaded = 0;
+            let lastTime = Date.now();
 
-            await api.uploadVideo(formData);
+            await api.uploadVideo(formData, (progressInfo) => {
+                const currentTime = Date.now();
+                const timeDiff = (currentTime - lastTime) / 1000;
 
-            clearInterval(progressInterval);
+                // Debug log to see real progress events
+                console.log('Upload Event:', progressInfo);
+
+                // Update metrics if it's the first update, or 200ms passed, or it's 100%
+                if (lastLoaded === 0 || timeDiff > 0.2 || progressInfo.percent === 100) {
+                    const bytesDiff = progressInfo.loaded - lastLoaded;
+                    const speed = timeDiff > 0 ? bytesDiff / timeDiff : 0;
+
+                    const newMetrics = {
+                        speed: speed,
+                        uploaded: progressInfo.loaded,
+                        total: progressInfo.total || videoFile.size
+                    };
+
+                    console.log('Setting Metrics:', newMetrics);
+                    setUploadMetrics(newMetrics);
+
+                    lastLoaded = progressInfo.loaded;
+                    lastTime = currentTime;
+                }
+
+                setUploadProgress(progressInfo.percent);
+            });
             setUploadProgress(100);
             setUploadSuccess(true);
 
@@ -409,17 +436,41 @@ const YourVideos = () => {
 
                             {/* Progress */}
                             {isUploading && (
-                                <div>
-                                    <div className="flex items-center justify-between text-sm mb-2">
-                                        <span>Uploading...</span>
-                                        <span>{uploadProgress}%</span>
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span className="font-medium text-white">Uploading Video...</span>
+                                        <span className="font-bold text-red-500">{uploadProgress}%</span>
                                     </div>
-                                    <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+
+                                    <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
                                         <div
-                                            className="h-full bg-red-600 transition-all duration-300"
-                                            style={{ width: `${uploadProgress}% ` }}
-                                        />
+                                            className="h-full bg-red-600 transition-all duration-300 relative"
+                                            style={{ width: `${uploadProgress}%` }}
+                                        >
+                                            <div className="absolute inset-0 bg-white/20 animate-[shimmer_2s_infinite]" />
+                                        </div>
                                     </div>
+
+                                    <div className="grid grid-cols-2 gap-4 text-xs text-gray-400">
+                                        <div className="bg-black/40 p-3 rounded-xl border border-gray-800/50">
+                                            <p className="uppercase tracking-widest text-[10px] text-gray-500 mb-1">Upload Speed</p>
+                                            <p className="font-mono text-white text-base">
+                                                {uploadMetrics.speed > 1024 * 1024
+                                                    ? `${(uploadMetrics.speed / (1024 * 1024)).toFixed(2)} MB/s`
+                                                    : `${(uploadMetrics.speed / 1024).toFixed(2)} KB/s`}
+                                            </p>
+                                        </div>
+                                        <div className="bg-black/40 p-3 rounded-xl border border-gray-800/50">
+                                            <p className="uppercase tracking-widest text-[10px] text-gray-500 mb-1">Progress</p>
+                                            <p className="font-mono text-white text-base">
+                                                {(uploadMetrics.uploaded / (1024 * 1024)).toFixed(1)} / {(uploadMetrics.total / (1024 * 1024)).toFixed(1)} MB
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <p className="text-[10px] text-center text-gray-500 italic">
+                                        Keep this window open until upload is complete
+                                    </p>
                                 </div>
                             )}
 

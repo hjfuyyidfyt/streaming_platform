@@ -10,13 +10,19 @@ const UploadVideo = () => {
     const [thumbnail, setThumbnail] = useState(null);
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [uploadMetrics, setUploadMetrics] = useState({
+        speed: 0,
+        uploaded: 0,
+        total: 0
+    });
     const [categories, setCategories] = useState([]);
     const [providers, setProviders] = useState([]);
     const [formData, setFormData] = useState({
         title: '',
         description: '',
         category: '', // will be ID
-        storage_mode: 'streamtape' // Default to StreamTape as requested
+        storage_mode: 'streamtape', // Default to StreamTape as requested
+        is_short: false
     });
 
 
@@ -127,6 +133,7 @@ const UploadVideo = () => {
             data.append('description', formData.description);
             // data.append('category_slug', formData.category.toLowerCase()); // Deprecated
             data.append('category_id', formData.category);
+            data.append('is_short', formData.is_short);
             // Step 2696 upload.py: category_id: int = Form(...),
             // We need to fetch categories to get ID.
             // For now I'll hardcode or fetch. 
@@ -185,9 +192,34 @@ const UploadVideo = () => {
                 data.append('thumbnail', thumbnail);
             }
 
-            setProgress(50); // Simulating upload progress since fetch doesn't support it natively easily without XHR
+            let lastLoaded = 0;
+            let lastTime = Date.now();
 
-            await api.uploadVideo(data);
+            await api.uploadVideo(data, (progressInfo) => {
+                const currentTime = Date.now();
+                const timeDiff = (currentTime - lastTime) / 1000;
+
+                console.log('Upload Event:', progressInfo);
+
+                // Update metrics if it's the first update, or at least 200ms passed, or it's 100%
+                if (lastLoaded === 0 || timeDiff > 0.2 || progressInfo.percent === 100) {
+                    const bytesDiff = progressInfo.loaded - lastLoaded;
+                    const speed = timeDiff > 0 ? bytesDiff / timeDiff : 0;
+
+                    const newMetrics = {
+                        speed: speed,
+                        uploaded: progressInfo.loaded,
+                        total: progressInfo.total || file.size
+                    };
+
+                    setUploadMetrics(newMetrics);
+
+                    lastLoaded = progressInfo.loaded;
+                    lastTime = currentTime;
+                }
+
+                setProgress(progressInfo.percent);
+            });
 
             setProgress(100);
             alert('Upload Complete!');
@@ -195,7 +227,7 @@ const UploadVideo = () => {
             // Reset Form
             setFile(null);
             setThumbnail(null);
-            setFormData({ title: '', description: '', category: 'Action' });
+            setFormData({ title: '', description: '', category: categories[0]?.id || '', is_short: false });
         } catch (error) {
             console.error("Upload failed", error);
             alert(`Upload Failed: ${error.message}`);
@@ -293,11 +325,18 @@ const UploadVideo = () => {
                                     ))}
                                 </select>
                             </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 bg-[#121212] border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-red-600 transition-colors" onClick={() => setFormData({ ...formData, is_short: !formData.is_short })}>
+                            <input
+                                type="checkbox"
+                                checked={formData.is_short}
+                                onChange={(e) => setFormData({ ...formData, is_short: e.target.checked })}
+                                className="w-5 h-5 rounded border-gray-700 bg-gray-800 text-red-600 focus:ring-red-600"
+                            />
                             <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-2">Privacy</label>
-                                <select className="w-full bg-[#121212] border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-red-600 text-gray-500" disabled>
-                                    <option>Public</option>
-                                </select>
+                                <p className="text-sm font-medium text-white">Upload as Short</p>
+                                <p className="text-xs text-gray-500">Vertical videos (9:16) work best.</p>
                             </div>
                         </div>
 
@@ -367,17 +406,38 @@ const UploadVideo = () => {
                     {uploading && (
                         <div className="bg-[#242424] p-6 rounded-xl border border-gray-800">
                             <div className="flex justify-between items-center mb-2">
-                                <span className="text-sm font-medium">Uploading...</span>
-                                <span className="text-sm text-gray-400">{progress}%</span>
+                                <span className="text-sm font-medium text-white">Uploading...</span>
+                                <span className="text-sm font-bold text-red-500">{progress}%</span>
                             </div>
-                            <div className="w-full bg-gray-700 rounded-full h-2">
+
+                            <div className="w-full bg-gray-700 rounded-full h-2.5 mb-4 overflow-hidden">
                                 <div
-                                    className="bg-red-600 h-2 rounded-full transition-all duration-300"
+                                    className="bg-red-600 h-full rounded-full transition-all duration-300 relative"
                                     style={{ width: `${progress}%` }}
-                                />
+                                >
+                                    <div className="absolute inset-0 bg-white/20 animate-[shimmer_2s_infinite]" />
+                                </div>
                             </div>
-                            <p className="text-xs text-center text-gray-500 mt-3 animate-pulse">
-                                Don't close this window
+
+                            <div className="grid grid-cols-2 gap-4 text-[11px] text-gray-400">
+                                <div className="bg-black/30 p-2 rounded border border-gray-800/50">
+                                    <p className="uppercase tracking-tighter text-[10px] text-gray-500 mb-0.5">Speed</p>
+                                    <p className="font-mono text-white">
+                                        {uploadMetrics.speed > 1024 * 1024
+                                            ? `${(uploadMetrics.speed / (1024 * 1024)).toFixed(2)} MB/s`
+                                            : `${(uploadMetrics.speed / 1024).toFixed(2)} KB/s`}
+                                    </p>
+                                </div>
+                                <div className="bg-black/30 p-2 rounded border border-gray-800/50">
+                                    <p className="uppercase tracking-tighter text-[10px] text-gray-500 mb-0.5">Progress</p>
+                                    <p className="font-mono text-white whitespace-nowrap">
+                                        {(uploadMetrics.uploaded / (1024 * 1024)).toFixed(1)} / {(uploadMetrics.total / (1024 * 1024)).toFixed(1)} MB
+                                    </p>
+                                </div>
+                            </div>
+
+                            <p className="text-[10px] text-center text-gray-500 mt-4 italic">
+                                Please keep this page open until completion
                             </p>
                         </div>
                     )}

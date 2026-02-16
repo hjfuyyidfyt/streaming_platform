@@ -121,7 +121,7 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
 
                 async def st_orig():
                     try:
-                        st_res = await asyncio.wait_for(upload_to_streamtape(source_file), timeout=600)
+                        st_res = await asyncio.wait_for(upload_to_streamtape(source_file, title=title), timeout=600)
                         if st_res:
                             save_source("streamtape", original_resolution, st_res['file_id'], st_res['embed_url'])
                     except Exception as e:
@@ -129,7 +129,7 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
 
                 async def dd_orig():
                     try:
-                        dd_res = await asyncio.wait_for(upload_to_doodstream(source_file), timeout=600)
+                        dd_res = await asyncio.wait_for(upload_to_doodstream(source_file, title=title), timeout=600)
                         if dd_res:
                             save_source("doodstream", original_resolution, dd_res['file_id'], dd_res['embed_url'])
                     except Exception as e:
@@ -166,7 +166,7 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
 
                             async def st_res_task(res, path):
                                 try:
-                                    st_res_data = await asyncio.wait_for(upload_to_streamtape(path), timeout=300)
+                                    st_res_data = await asyncio.wait_for(upload_to_streamtape(path, title=f"{title} {res}"), timeout=300)
                                     if st_res_data:
                                         save_source("streamtape", res, st_res_data['file_id'], st_res_data['embed_url'])
                                 except Exception as e:
@@ -174,7 +174,7 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
 
                             async def dd_res_task(res, path):
                                 try:
-                                    dd_res_data = await asyncio.wait_for(upload_to_doodstream(path), timeout=300)
+                                    dd_res_data = await asyncio.wait_for(upload_to_doodstream(path, title=f"{title} {res}"), timeout=300)
                                     if dd_res_data:
                                         save_source("doodstream", res, dd_res_data['file_id'], dd_res_data['embed_url'])
                                 except Exception as e:
@@ -225,6 +225,7 @@ async def upload_video(
     category_id: int = Form(...),
     file: UploadFile = File(...),
     thumbnail: UploadFile = File(None),
+    is_short: bool = Form(False),
     current_user: User = Depends(require_user),
     session: Session = Depends(get_session)
 ):
@@ -268,7 +269,8 @@ async def upload_video(
         uploader_id=current_user.id,
         storage_mode="multi",
         duration=duration,
-        original_resolution=original_resolution
+        original_resolution=original_resolution,
+        is_short=is_short
     )
     session.add(video)
     session.commit()

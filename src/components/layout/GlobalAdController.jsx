@@ -1,11 +1,20 @@
 import { useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 
 const GlobalAdController = () => {
+    const { isAdmin } = useAuth();
+    const location = useLocation();
+
+    const shouldHideAds = isAdmin || location.pathname.startsWith('/admin');
+
     // Smartlink URL provided by user
     const AD_URL = "https://www.effectivegatecpm.com/ieyn4dw3fw?key=390a194dfdfcc7ab638a23fab9da0fa2";
     const COOLDOWN = 60000; // 1 minute in milliseconds
 
     useEffect(() => {
+        if (shouldHideAds) return;
+
         const handleClick = (e) => {
             // Check if we verify ad triggers
             const lastTime = localStorage.getItem('lastAdTime');
