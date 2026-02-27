@@ -84,8 +84,8 @@ class TelegramUploadQueue:
         """Process jobs one at a time."""
         from .telegram_uploader import upload_video_to_telegram
         from ..database import engine
-        from sqlmodel import Session as SqlSession
-        from ..models import VideoSource, TelegramInfo, Video
+        from sqlmodel import Session as SqlSession, select
+        from ..models import VideoSource, TelegramInfo, Video, VideoResolution
         
         logger.info("[TelegramQueue] Worker loop started, waiting for jobs...")
         
