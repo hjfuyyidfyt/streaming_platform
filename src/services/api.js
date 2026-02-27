@@ -12,13 +12,22 @@ export const api = {
     get: async (endpoint, token = null) => {
         try {
             const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-            const response = await fetch(`${API_URL}${endpoint}`, { headers });
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout (Neon DB cold-start can take 15-30s)
+            const response = await fetch(`${API_URL}${endpoint}`, {
+                headers,
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
             if (!response.ok) {
                 const err = await response.json().catch(() => ({}));
                 throw new Error(err.detail || 'Request failed');
             }
             return await response.json();
         } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request timed out — server may be unavailable');
+            }
             console.error('API Error:', error);
             throw error;
         }
@@ -29,17 +38,24 @@ export const api = {
             const headers = isFormData
                 ? (token ? { 'Authorization': `Bearer ${token}` } : {})
                 : getAuthHeaders(token);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000);
             const response = await fetch(`${API_URL}${endpoint}`, {
                 method: 'POST',
                 headers,
-                body: isFormData ? body : JSON.stringify(body)
+                body: isFormData ? body : JSON.stringify(body),
+                signal: controller.signal
             });
+            clearTimeout(timeoutId);
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
                 throw new Error(errorData.detail || 'Request failed');
             }
             return await response.json();
         } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request timed out — server may be unavailable');
+            }
             console.error('API Error:', error);
             throw error;
         }
@@ -83,9 +99,12 @@ export const api = {
 
 
     // Stream
-    getStreamUrl: (videoId, resolution = null) => {
+    getStreamUrl: (videoId, resolution = null, provider = null) => {
         const base = `${API_URL}/stream/${videoId}`;
-        return resolution ? `${base}?resolution=${resolution}` : base;
+        const params = [];
+        if (resolution) params.push(`resolution=${resolution}`);
+        if (provider) params.push(`provider=${provider}`);
+        return params.length ? `${base}?${params.join('&')}` : base;
     },
     getVideoResolutions: (videoId) => api.get(`/stream/${videoId}/resolutions`),
     recordView: (videoId) => api.post(`/videos/${videoId}/view`, {}),
@@ -228,6 +247,7 @@ export const api = {
     // ========== ADMIN SETTINGS ==========
     getSystemSettings: (token) => api.get('/admin/settings', token),
     updateSystemSettings: (settings, token) => api.post('/admin/settings', settings, false, token),
+    getAdSettings: () => api.get('/admin/ad-settings'),
 
     // ========== ADMIN VIDEO MANAGEMENT ==========
     adminListVideos: (token, skip = 0, limit = 20) => api.get(`/admin/videos?skip=${skip}&limit=${limit}`, token),

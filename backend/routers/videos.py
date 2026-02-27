@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from typing import List, Optional
 from ..database import get_session
 from ..models import Video, Category, VideoPublic, CategoryPublic, ViewHistory
@@ -11,18 +11,43 @@ router = APIRouter(
     tags=["videos"]
 )
 
-@router.get("/", response_model=List[VideoPublic])
+from ..database import engine
+from ..services.cache import app_cache
+
+from fastapi.encoders import jsonable_encoder
+
+@router.get("/")
 async def read_videos(
     skip: int = 0, 
-    limit: int = 20, 
+    limit: int = 20,
     session: Session = Depends(get_session)
 ):
+    # Cache key for first page only
+    cache_key = f"videos_skip_{skip}_limit_{limit}"
+    if skip == 0:
+        cached = app_cache.get(cache_key)
+        if cached:
+            return cached
+
     videos = session.exec(
         select(Video)
-        .options(joinedload(Video.category), joinedload(Video.uploader))
+        .options(
+            joinedload(Video.category), 
+            joinedload(Video.uploader),
+            selectinload(Video.sources),
+            joinedload(Video.telegram_info),
+            selectinload(Video.resolutions)
+        )
         .offset(skip).limit(limit)
     ).all()
-    return videos
+    
+    # Use jsonable_encoder for robust serialization
+    serialized = jsonable_encoder(videos)
+    
+    if skip == 0:
+        app_cache.set(cache_key, serialized, ttl=300) # Cache for 5 min
+    
+    return serialized
 
 @router.get("/search", response_model=List[VideoPublic])
 async def search_videos(
@@ -51,10 +76,19 @@ async def read_shorts(
     ).all()
     return videos
 
-@router.get("/categories/all", response_model=List[CategoryPublic])
+@router.get("/categories/all")
 async def read_categories(session: Session = Depends(get_session)):
+    cache_key = "categories_all"
+    cached = app_cache.get(cache_key)
+    if cached:
+        return cached
+        
     categories = session.exec(select(Category)).all()
-    return categories
+    # Use jsonable_encoder for consistency and safety
+    serialized = jsonable_encoder(categories)
+    
+    app_cache.set(cache_key, serialized, ttl=600) # Cache for 10 min
+    return serialized
 
 @router.get("/category/{slug}", response_model=List[VideoPublic])
 async def read_videos_by_category(
@@ -79,7 +113,15 @@ async def read_videos_by_category(
 @router.get("/{video_id}", response_model=VideoPublic)
 async def read_video(video_id: int, session: Session = Depends(get_session)):
     video = session.exec(
-        select(Video).where(Video.id == video_id).options(joinedload(Video.category), joinedload(Video.uploader), joinedload(Video.sources))
+        select(Video)
+        .where(Video.id == video_id)
+        .options(
+            joinedload(Video.category), 
+            joinedload(Video.uploader), 
+            selectinload(Video.sources),
+            joinedload(Video.telegram_info),
+            selectinload(Video.resolutions)
+        )
     ).first()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")

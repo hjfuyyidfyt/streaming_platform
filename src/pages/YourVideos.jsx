@@ -114,7 +114,8 @@ const YourVideos = () => {
             formData.append('title', uploadData.title);
             formData.append('description', uploadData.description || '');
             const selectedCategory = categories.find(c => c.slug === uploadData.category_slug);
-            formData.append('category_id', selectedCategory ? selectedCategory.id : categories[0].id);
+            const categoryId = selectedCategory?.id || categories[0]?.id || 1;
+            formData.append('category_id', categoryId);
 
             if (thumbnailFile) {
                 formData.append('thumbnail', thumbnailFile);
@@ -153,9 +154,14 @@ const YourVideos = () => {
             setUploadProgress(100);
             setUploadSuccess(true);
 
-            // Refresh videos list
-            const updatedVideos = await api.getMyVideos();
-            setVideos(updatedVideos);
+            // Refresh videos list (don't let this override the success message)
+            try {
+                const updatedVideos = await api.getMyVideos();
+                setVideos(updatedVideos);
+            } catch (refreshErr) {
+                console.warn('Video list refresh failed after upload (upload was successful):', refreshErr);
+                // Don't overwrite the success — just silently fail the refresh
+            }
 
             // Reset form after short delay
             setTimeout(() => {
@@ -181,6 +187,11 @@ const YourVideos = () => {
                 }
             } else if (err.message) {
                 errMsg = err.message;
+            }
+
+            // If auth error, prompt re-login
+            if (err.response?.status === 401 || errMsg.includes('Not authenticated')) {
+                errMsg = 'Session expired. Please log out and log in again, then retry.';
             }
             setUploadError(errMsg);
         } finally {

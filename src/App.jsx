@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.jsx';
+import { ThemeProvider } from './context/ThemeContext.jsx';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import Home from './pages/Home';
 import VideoDetails from './pages/VideoDetails';
@@ -24,54 +25,56 @@ import AgeVerification from './components/common/AgeVerification.jsx';
 
 function App() {
   return (
-    <AuthProvider>
-      <AgeVerification />
-      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <GlobalAdController />
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/video/:id" element={<VideoDetails />} />
-          <Route path="/shorts" element={<Shorts />} />
-          <Route path="/auth" element={<Auth />} />
-          <Route path="/your-videos" element={<YourVideos />} />
-          <Route path="/history" element={
-            <ProtectedRoute>
-              <History />
-            </ProtectedRoute>
-          } />
-          <Route path="/subscriptions" element={
-            <ProtectedRoute>
-              <Subscriptions />
-            </ProtectedRoute>
-          } />
-          <Route path="/playlists" element={
-            <ProtectedRoute>
-              <Playlists />
-            </ProtectedRoute>
-          } />
-          <Route path="/playlist/:id" element={
-            <ProtectedRoute>
-              <PlaylistDetails />
-            </ProtectedRoute>
-          } />
-          <Route path="/category/:slug" element={<Home />} />
-          <Route path="/admin/login" element={<Login />} />
+    <ThemeProvider>
+      <AuthProvider>
+        <AgeVerification />
+        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <GlobalAdController />
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/video/:id" element={<VideoDetails />} />
+            <Route path="/shorts" element={<Shorts />} />
+            <Route path="/auth" element={<Auth />} />
+            <Route path="/your-videos" element={<YourVideos />} />
+            <Route path="/history" element={
+              <ProtectedRoute>
+                <History />
+              </ProtectedRoute>
+            } />
+            <Route path="/subscriptions" element={
+              <ProtectedRoute>
+                <Subscriptions />
+              </ProtectedRoute>
+            } />
+            <Route path="/playlists" element={
+              <ProtectedRoute>
+                <Playlists />
+              </ProtectedRoute>
+            } />
+            <Route path="/playlist/:id" element={
+              <ProtectedRoute>
+                <PlaylistDetails />
+              </ProtectedRoute>
+            } />
+            <Route path="/category/:slug" element={<Home />} />
+            <Route path="/admin/login" element={<Login />} />
 
-          {/* Protected Admin Routes */}
-          <Route path="/admin" element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          }>
-            <Route index element={<DashboardHome />} />
-            <Route path="upload" element={<UploadVideo />} />
-            <Route path="categories" element={<Categories />} />
-            <Route path="storage" element={<Storage />} />
-            <Route path="settings" element={<Settings />} />
-          </Route>
-        </Routes>
-      </Router>
-    </AuthProvider>
+            {/* Protected Admin Routes */}
+            <Route path="/admin" element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }>
+              <Route index element={<DashboardHome />} />
+              <Route path="upload" element={<UploadVideo />} />
+              <Route path="categories" element={<Categories />} />
+              <Route path="storage" element={<Storage />} />
+              <Route path="settings" element={<Settings />} />
+            </Route>
+          </Routes>
+        </Router>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 

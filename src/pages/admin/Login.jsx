@@ -10,14 +10,18 @@ const Login = () => {
     const { login } = useAuth();
     const navigate = useNavigate();
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        console.log("Login submitted", { email, password });
-        if (login(email, password)) {
-            console.log("Login successful, navigating...");
-            navigate('/admin');
-        } else {
-            setError('Invalid credentials');
+        setError('');
+        try {
+            const result = await login(email, password);
+            if (result?.success) {
+                navigate('/admin');
+            } else {
+                setError(result?.error || 'Invalid credentials');
+            }
+        } catch (err) {
+            setError(err.message || 'Login failed. Please try again.');
         }
     };
 

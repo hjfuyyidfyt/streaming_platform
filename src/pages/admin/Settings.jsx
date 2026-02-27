@@ -101,6 +101,10 @@ const Settings = () => {
                     + '`/videos` — List recent videos with sources\n'
                     + '`/find` — Search videos by title (interactive)\n'
                     + '`/delete` — Interactive video deletion tool\n'
+                    + '`/reprocess <id>` — Re-transcode video & upload qualities\n'
+                    + '`/ads` — View ad status\n'
+                    + '`/ads off` — Disable all ads globally\n'
+                    + '`/ads on` — Enable all ads globally\n'
                     + '`/help` — Show this list';
             }
 
@@ -207,6 +211,54 @@ const Settings = () => {
             if (primary === 'find') {
                 setFindMode({ step: 'input' });
                 return '__FIND_PROMPT__';
+            }
+
+            // ===== /ads =====
+            if (primary === 'ads') {
+                const action = parts[1];
+                const currentSettings = await api.getSystemSettings(token);
+                // Ensure ad_settings exists
+                if (!currentSettings.ad_settings) {
+                    currentSettings.ad_settings = { master_enabled: true, placements: {}, cooldown_seconds: 60, urls: {} };
+                }
+                if (action === 'off') {
+                    currentSettings.ad_settings.master_enabled = false;
+                    await api.updateSystemSettings(currentSettings, token);
+                    setSettings(currentSettings);
+                    return '🚫 **All Ads Disabled**\n\nBanner ads, popunder ads, and video overlay ads have been turned off globally via server settings.\n\nTo re-enable: `/ads on`';
+                }
+                if (action === 'on') {
+                    currentSettings.ad_settings.master_enabled = true;
+                    await api.updateSystemSettings(currentSettings, token);
+                    setSettings(currentSettings);
+                    return '✅ **All Ads Enabled**\n\nBanner ads, popunder ads, and video overlay ads are now active.\n\nTo disable: `/ads off`';
+                }
+                const currentState = currentSettings.ad_settings.master_enabled ? '✅ ON' : '🚫 OFF';
+                const placements = currentSettings.ad_settings.placements || {};
+                const placementLines = Object.entries(placements).map(([k, v]) => `• **${v.name}** — ${v.enabled ? '✅ ON' : '⛔ OFF'}`).join('\n');
+                return `📢 **Ad Status:** ${currentState}\n\n**Placements:**\n${placementLines}\n\n**Cooldown:** ${currentSettings.ad_settings.cooldown_seconds || 60}s\n\nUsage:\n• \`/ads off\` — Disable all ads\n• \`/ads on\` — Enable all ads`;
+            }
+
+            // ===== /reprocess =====
+            if (primary === 'reprocess') {
+                const videoId = parts[1];
+                if (!videoId || isNaN(videoId)) {
+                    return '⚙️ **Reprocess Video**\n\nRe-triggers transcoding and upload of multiple quality versions (720p, 480p, 240p).\n\nUsage: `/reprocess <video_id>`\n\nExample: `/reprocess 47`';
+                }
+                try {
+                    const res = await fetch(`${API_URL}/admin/reprocess/${videoId}`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        return `✅ **Reprocess Started!**\n\n${data.message}\n\n📁 Source: \`${data.source_file}\`\n🔌 Providers: ${data.active_providers.join(', ')}\n\n⏳ Transcoding + upload running in background. Check back in a few minutes.`;
+                    } else {
+                        return `❌ **Reprocess Failed**\n\n${data.detail || 'Unknown error'}`;
+                    }
+                } catch (err) {
+                    return `❌ **Reprocess Error:** ${err.message}`;
+                }
             }
 
             return `❓ Unknown command: "${cmd}"\n\nType \`/help\` to see available commands.`;
@@ -500,12 +552,182 @@ const Settings = () => {
                                 <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                                     <div>
                                         <h2 className="text-xl font-semibold">Ad Management</h2>
-                                        <p className="text-sm text-gray-400 mt-1">Control advertisement providers and display logic.</p>
+                                        <p className="text-sm text-gray-400 mt-1">Control advertisement placements, cooldown, and URLs.</p>
                                     </div>
-                                    <div className="bg-[#242424] p-8 rounded-xl border border-gray-800 flex flex-col items-center justify-center text-center space-y-3 opacity-60">
-                                        <Megaphone className="w-10 h-10 text-gray-600" />
-                                        <p className="text-gray-400">Ad configuration panel is being prepared.</p>
-                                        <p className="text-xs text-gray-600 italic">Centralized ad controls coming soon</p>
+
+                                    {/* Master Toggle */}
+                                    <div className="flex items-center justify-between bg-[#242424] p-5 rounded-xl border border-gray-700/30">
+                                        <div className="flex items-center gap-4">
+                                            <div className={`w-3 h-3 rounded-full ${settings.ad_settings?.master_enabled ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.6)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`}></div>
+                                            <div>
+                                                <p className="font-semibold text-gray-100 text-lg">Master Ad Switch</p>
+                                                <p className="text-xs text-gray-500 mt-0.5">পুরো সাইটের সব ad একসাথে বন্ধ/চালু</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => setSettings(prev => ({
+                                                ...prev,
+                                                ad_settings: { ...prev.ad_settings, master_enabled: !prev.ad_settings?.master_enabled }
+                                            }))}
+                                            className={`relative w-14 h-7 rounded-full transition-all duration-300 ${settings.ad_settings?.master_enabled ? 'bg-emerald-500' : 'bg-gray-700'}`}
+                                        >
+                                            <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow-md transition-all duration-300 ${settings.ad_settings?.master_enabled ? 'left-[30px]' : 'left-0.5'}`}></div>
+                                        </button>
+                                    </div>
+
+                                    {/* Per-Placement Toggles */}
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">Ad Placements</h3>
+                                        <div className="space-y-3">
+                                            {settings.ad_settings?.placements && Object.entries(settings.ad_settings.placements).map(([key, placement]) => (
+                                                <div key={key} className={`flex items-center justify-between bg-[#242424] p-4 rounded-xl border transition-all ${!settings.ad_settings?.master_enabled ? 'opacity-40 pointer-events-none border-gray-800' : 'border-gray-700/30 hover:border-gray-600'}`}>
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-2 h-2 rounded-full ${placement.enabled ? 'bg-emerald-500' : 'bg-gray-600'}`}></div>
+                                                        <div>
+                                                            <p className="font-medium text-gray-200 text-sm">{placement.name}</p>
+                                                            <p className="text-[11px] text-gray-600 uppercase tracking-wider">{key}</p>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => setSettings(prev => ({
+                                                            ...prev,
+                                                            ad_settings: {
+                                                                ...prev.ad_settings,
+                                                                placements: {
+                                                                    ...prev.ad_settings.placements,
+                                                                    [key]: { ...placement, enabled: !placement.enabled }
+                                                                }
+                                                            }
+                                                        }))}
+                                                        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${placement.enabled
+                                                            ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 hover:bg-emerald-500/20'
+                                                            : 'bg-gray-800 text-gray-500 border border-gray-700 hover:bg-gray-750'
+                                                            }`}
+                                                    >
+                                                        {placement.enabled ? 'ON' : 'OFF'}
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Cooldown Config */}
+                                    <div className={`${!settings.ad_settings?.master_enabled ? 'opacity-40 pointer-events-none' : ''}`}>
+                                        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">Popunder Cooldown</h3>
+                                        <div className="bg-[#242424] p-5 rounded-xl border border-gray-700/30">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <p className="text-sm text-gray-400">কত সেকেন্ড পরে আবার popunder দেখাবে</p>
+                                                <span className="bg-indigo-500/15 text-indigo-400 px-3 py-1 rounded-lg text-sm font-bold">
+                                                    {settings.ad_settings?.cooldown_seconds || 60}s
+                                                </span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="10"
+                                                max="300"
+                                                step="5"
+                                                value={settings.ad_settings?.cooldown_seconds || 60}
+                                                onChange={(e) => setSettings(prev => ({
+                                                    ...prev,
+                                                    ad_settings: { ...prev.ad_settings, cooldown_seconds: parseInt(e.target.value) }
+                                                }))}
+                                                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                                            />
+                                            <div className="flex justify-between text-[10px] text-gray-600 mt-1">
+                                                <span>10s</span>
+                                                <span>60s</span>
+                                                <span>120s</span>
+                                                <span>180s</span>
+                                                <span>300s</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Ad URLs */}
+                                    <div className={`${!settings.ad_settings?.master_enabled ? 'opacity-40 pointer-events-none' : ''}`}>
+                                        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">Ad URLs</h3>
+                                        <div className="space-y-3">
+                                            <div className="bg-[#242424] p-4 rounded-xl border border-gray-700/30">
+                                                <label className="text-xs text-gray-500 font-medium block mb-2">Popunder Smartlink URL</label>
+                                                <input
+                                                    type="text"
+                                                    value={settings.ad_settings?.urls?.popunder_url || ''}
+                                                    onChange={(e) => setSettings(prev => ({
+                                                        ...prev,
+                                                        ad_settings: {
+                                                            ...prev.ad_settings,
+                                                            urls: { ...prev.ad_settings.urls, popunder_url: e.target.value }
+                                                        }
+                                                    }))}
+                                                    className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg py-2.5 px-3 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all font-mono"
+                                                    placeholder="https://..."
+                                                />
+                                            </div>
+                                            <div className="bg-[#242424] p-4 rounded-xl border border-gray-700/30">
+                                                <label className="text-xs text-gray-500 font-medium block mb-2">Banner Script URL</label>
+                                                <input
+                                                    type="text"
+                                                    value={settings.ad_settings?.urls?.banner_script_url || ''}
+                                                    onChange={(e) => setSettings(prev => ({
+                                                        ...prev,
+                                                        ad_settings: {
+                                                            ...prev.ad_settings,
+                                                            urls: { ...prev.ad_settings.urls, banner_script_url: e.target.value }
+                                                        }
+                                                    }))}
+                                                    className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg py-2.5 px-3 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all font-mono"
+                                                    placeholder="//script.url/invoke.js"
+                                                />
+                                            </div>
+                                            <div className="bg-[#242424] p-4 rounded-xl border border-gray-700/30">
+                                                <label className="text-xs text-gray-500 font-medium block mb-2">Banner Container ID</label>
+                                                <input
+                                                    type="text"
+                                                    value={settings.ad_settings?.urls?.banner_container_id || ''}
+                                                    onChange={(e) => setSettings(prev => ({
+                                                        ...prev,
+                                                        ad_settings: {
+                                                            ...prev.ad_settings,
+                                                            urls: { ...prev.ad_settings.urls, banner_container_id: e.target.value }
+                                                        }
+                                                    }))}
+                                                    className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg py-2.5 px-3 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all font-mono"
+                                                    placeholder="container-xxxxxxxxxxxx"
+                                                />
+                                            </div>
+                                            <div className="bg-[#242424] p-4 rounded-xl border border-gray-700/30">
+                                                <label className="text-xs text-gray-500 font-medium block mb-2">Inline Banner Script URL (468x60)</label>
+                                                <input
+                                                    type="text"
+                                                    value={settings.ad_settings?.urls?.inline_banner_script_url || ''}
+                                                    onChange={(e) => setSettings(prev => ({
+                                                        ...prev,
+                                                        ad_settings: {
+                                                            ...prev.ad_settings,
+                                                            urls: { ...prev.ad_settings.urls, inline_banner_script_url: e.target.value }
+                                                        }
+                                                    }))}
+                                                    className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg py-2.5 px-3 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all font-mono"
+                                                    placeholder="https://www.highperformanceformat.com/.../invoke.js"
+                                                />
+                                            </div>
+                                            <div className="bg-[#242424] p-4 rounded-xl border border-gray-700/30">
+                                                <label className="text-xs text-gray-500 font-medium block mb-2">Inline Banner Key</label>
+                                                <input
+                                                    type="text"
+                                                    value={settings.ad_settings?.urls?.inline_banner_key || ''}
+                                                    onChange={(e) => setSettings(prev => ({
+                                                        ...prev,
+                                                        ad_settings: {
+                                                            ...prev.ad_settings,
+                                                            urls: { ...prev.ad_settings.urls, inline_banner_key: e.target.value }
+                                                        }
+                                                    }))}
+                                                    className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg py-2.5 px-3 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all font-mono"
+                                                    placeholder="92ddfa4ed8b775183e950459a641f268"
+                                                />
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             )}

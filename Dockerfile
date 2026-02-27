@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for StreamPlatform
+# Multi-stage Dockerfile for vPlyer
 
 # --- Stage 1: Build Frontend ---
 FROM node:22-alpine AS frontend-build

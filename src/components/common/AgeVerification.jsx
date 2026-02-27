@@ -62,7 +62,7 @@ const AgeVerification = () => {
                 </div>
 
                 <p className="text-[10px] text-gray-600 uppercase tracking-widest pt-4">
-                    Streaming Platform &copy; 2026
+                    vPlyer &copy; 2026
                 </p>
             </div>
         </div>

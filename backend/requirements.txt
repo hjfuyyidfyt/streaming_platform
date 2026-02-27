@@ -4,7 +4,7 @@ sqlmodel
 python-multipart
 passlib[bcrypt]
 python-dotenv
-python-telegram-bot
+telethon
 httpx
 slowapi
 psycopg2-binary

@@ -11,7 +11,7 @@ pip install -r backend/requirements.txt
 
 echo.
 echo 2. Starting Backend (FastAPI)...
-start "StreamPlatform Backend" cmd /k "python -m uvicorn backend.main:app --reload --port 8000"
+start "vPlyer Backend" cmd /k "python -m uvicorn backend.main:app --reload --port 8000"
 
 echo.
 echo 3. Starting Frontend (React)...
@@ -19,7 +19,7 @@ cd frontend
 echo Installing Frontend Dependencies (if needed)...
 call npm.cmd install
 echo Starting Frontend Server...
-start "StreamPlatform Frontend" cmd /k "npm.cmd run dev"
+start "vPlyer Frontend" cmd /k "npm.cmd run dev"
 
 echo.
 echo ===================================================

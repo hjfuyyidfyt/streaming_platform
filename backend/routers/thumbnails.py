@@ -22,36 +22,54 @@ os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 @router.get("/{video_id}")
 async def get_thumbnail(
-    video_id: int,
-    session: Session = Depends(get_session)
+    video_id: int
 ):
-    """Get thumbnail for a video. Returns uploaded image (local or telegram) or generated SVG placeholder."""
-    video = session.get(Video, video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
+    """Get thumbnail for a video. Returns uploaded image (local) or SVG placeholder."""
     
-    # 1. Check for saved thumbnail locally (Backup/Cache)
+    # 1. Check for saved thumbnail locally FIRST (no DB needed = instant)
     for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
         thumb_path = os.path.join(THUMBNAIL_DIR, f"{video_id}{ext}")
         if os.path.exists(thumb_path):
             return FileResponse(thumb_path)
-            
-    # 2. Check Telegram Proxy
-    tg_info = session.exec(select(TelegramInfo).where(TelegramInfo.video_id == video_id)).first()
-    if tg_info and tg_info.thumbnail_file_id:
-        try:
-            content = await get_telegram_file_bytes(tg_info.thumbnail_file_id)
-            if content:
-                # Assuming JPEG for now, or detect from bytes
-                return Response(content=bytes(content), media_type="image/jpeg")
-        except Exception as e:
-            logger.error(f"Failed to fetch thumb from TG: {e}")
     
-    # 3. No saved thumbnail - return SVG placeholder
-    return Response(
-        content=create_placeholder_image(video.title),
-        media_type="image/svg+xml"
-    )
+    # 2. No local file — need DB for Telegram fallback or placeholder
+    from ..database import get_session as _get_session
+    try:
+        session_gen = _get_session()
+        session = next(session_gen)
+    except Exception as e:
+        logger.error(f"DB connection failed for thumbnail: {e}")
+        # Return generic placeholder without video title
+        return Response(
+            content=create_placeholder_image(f"Video {video_id}"),
+            media_type="image/svg+xml"
+        )
+    
+    try:
+        video = session.get(Video, video_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        # 3. Check Telegram thumbnail (proxy from TG)
+        tg_info = session.exec(select(TelegramInfo).where(TelegramInfo.video_id == video_id)).first()
+        if tg_info and tg_info.thumbnail_file_id:
+            try:
+                content = await get_telegram_file_bytes(tg_info.thumbnail_file_id)
+                if content:
+                    return Response(content=bytes(content), media_type="image/jpeg")
+            except Exception as e:
+                logger.error(f"Failed to fetch thumb from TG: {e}")
+        
+        # 4. No saved thumbnail - return SVG placeholder
+        return Response(
+            content=create_placeholder_image(video.title),
+            media_type="image/svg+xml"
+        )
+    finally:
+        try:
+            session_gen.close()
+        except Exception:
+            pass
 
 
 def create_placeholder_image(title: str) -> bytes:

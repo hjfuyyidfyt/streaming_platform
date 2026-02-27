@@ -135,6 +135,11 @@ async def cleanup_storage(
             except Exception as e:
                 logger.error(f"Failed to delete {path}: {e}")
                 
+                
+    # Invalidate cache after cleanup
+    from ..services.cache import app_cache
+    app_cache.invalidate()
+    
     return {"status": "success", "cleaned": cleaned}
 
 # System Settings Logic
@@ -150,6 +155,24 @@ class SystemSettings(BaseModel):
         "local": {"enabled": False, "name": "Local Server (Disabled)"}
     }
     default_storage: str = "streamtape"
+    ad_settings: dict = {
+        "master_enabled": True,
+        "placements": {
+            "popunder": {"enabled": True, "name": "Popunder (Click Ad)"},
+            "video_overlay": {"enabled": True, "name": "Video Overlay Ad"},
+            "banner_home": {"enabled": True, "name": "Home Page Banner"},
+            "banner_video": {"enabled": True, "name": "Video Page Banner"},
+            "banner_sidebar": {"enabled": False, "name": "Sidebar Banner"}
+        },
+        "cooldown_seconds": 60,
+        "urls": {
+            "popunder_url": "https://www.effectivegatecpm.com/ieyn4dw3fw?key=390a194dfdfcc7ab638a23fab9da0fa2",
+            "banner_script_url": "//pl28706593.effectivegatecpm.com/2260504880a1a301d3ee9ca7479cffa9/invoke.js",
+            "banner_container_id": "container-2260504880a1a301d3ee9ca7479cffa9",
+            "inline_banner_script_url": "https://www.highperformanceformat.com/92ddfa4ed8b775183e950459a641f268/invoke.js",
+            "inline_banner_key": "92ddfa4ed8b775183e950459a641f268"
+        }
+    }
 
 def load_settings() -> SystemSettings:
     if not os.path.exists(SETTINGS_FILE):
@@ -186,6 +209,12 @@ async def update_settings(
     # Admin check required
     save_settings(settings)
     return settings
+
+@router.get("/ad-settings")
+async def get_ad_settings():
+    """Public endpoint — frontend reads this to decide which ads to show."""
+    s = load_settings()
+    return s.ad_settings
 
 # ============== Admin Video Management ==============
 from ..models import Video, VideoSource, TelegramInfo, VideoResolution, ViewHistory, Comment, CommentLike, VideoLike, WatchHistory, PlaylistItem
@@ -394,6 +423,11 @@ async def admin_delete_video(
         # Delete video record
         session.delete(video)
         session.commit()
+        
+        # Invalidate cache after delete
+        from ..services.cache import app_cache
+        app_cache.invalidate("videos_skip_0")
+        
         return {
             "status": "success",
             "mode": "full",
@@ -425,4 +459,62 @@ async def admin_delete_all_videos(
         session.delete(video)
     
     session.commit()
+    
+    # Invalidate EVERYTHING after deleting all videos
+    from ..services.cache import app_cache
+    app_cache.invalidate()
+    
     return {"status": "success", "deleted_count": count}
+
+
+@router.post("/reprocess/{video_id}")
+async def admin_reprocess_video(
+    video_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Re-trigger transcoding + upload for an existing video.
+    Only does Phase 2+3 (transcode + upload transcoded qualities).
+    Skips Phase 1 (original already uploaded).
+    """
+    video = session.get(Video, video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    # Find mp4 source files in temp_uploads (exclude telegram queue copies)
+    mp4_files = []
+    for f in os.listdir(TEMP_DIR):
+        fpath = os.path.join(TEMP_DIR, f)
+        if os.path.isfile(fpath) and f.endswith('.mp4') and not f.endswith('.tg_queue_copy'):
+            mp4_files.append((fpath, os.path.getmtime(fpath)))
+    
+    if not mp4_files:
+        raise HTTPException(status_code=404, detail="No source file found in temp_uploads. The original file may have been cleaned up.")
+    
+    # Sort by newest first — use newest file
+    mp4_files.sort(key=lambda x: x[1], reverse=True)
+    source_file = mp4_files[0][0]
+    
+    # Get active providers
+    settings = load_settings()
+    active_providers = [k for k, v in settings.storage_providers.items() if v['enabled']]
+    if not active_providers:
+        active_providers = ['streamtape']
+    
+    # Run transcode-only background task
+    from .upload import transcode_only_task
+    transcode_only_task(
+        video_id=video.id,
+        source_file=source_file,
+        title=video.title,
+        original_resolution=video.original_resolution or "1080p",
+        active_providers=active_providers
+    )
+    
+    return {
+        "status": "success",
+        "message": f"Reprocessing video #{video_id} '{video.title}' (transcode + upload only)",
+        "source_file": os.path.basename(source_file),
+        "active_providers": active_providers
+    }

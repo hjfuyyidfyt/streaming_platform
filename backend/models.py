@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 from sqlmodel import Field, SQLModel, Relationship
+from pydantic import ConfigDict
 
 class CategoryBase(SQLModel):
     name: str = Field(index=True)
@@ -13,6 +14,22 @@ class Category(CategoryBase, table=True):
 
 class CategoryPublic(CategoryBase):
     id: int
+    model_config = ConfigDict(from_attributes=True)
+
+class TelegramInfoPublic(SQLModel):
+    file_id: str
+    file_unique_id: str
+    channel_message_id: Optional[int] = None
+    file_size: Optional[int] = None
+    mime_type: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class VideoResolutionPublic(SQLModel):
+    resolution: str
+    file_id: str
+    channel_message_id: Optional[int] = None
+    file_size: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
 
 from enum import Enum
 
@@ -50,6 +67,7 @@ class UserPublic(SQLModel):
     username: str
     display_name: Optional[str] = None
     avatar_url: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
 class VideoSourcePublic(SQLModel):
     id: int
@@ -57,13 +75,17 @@ class VideoSourcePublic(SQLModel):
     resolution: Optional[str] = None
     embed_url: Optional[str] = None
     download_url: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
 class VideoPublic(VideoBase):
     id: int
     category: Optional[CategoryPublic] = None
     uploader: Optional[UserPublic] = None
     sources: List[VideoSourcePublic] = []
+    telegram_info: Optional[TelegramInfoPublic] = None
+    resolutions: List[VideoResolutionPublic] = []
     is_short: bool = False
+    model_config = ConfigDict(from_attributes=True)
 
 class VideoSource(SQLModel, table=True):
     """Stores multiple external links for a single video."""

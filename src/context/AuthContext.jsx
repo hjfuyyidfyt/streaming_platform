@@ -16,9 +16,21 @@ export const AuthProvider = ({ children }) => {
                     const userData = await api.getMe(token);
                     setUser(userData);
                 } catch (err) {
-                    // Token invalid, clear it
-                    localStorage.removeItem('token');
-                    setToken(null);
+                    // Only clear token if it's actually invalid (401/403)
+                    // Do NOT clear on network errors, server crashes, etc.
+                    const msg = (err.message || '').toLowerCase();
+                    if (msg.includes('not authenticated') ||
+                        msg.includes('token') ||
+                        msg.includes('401') ||
+                        msg.includes('expired') ||
+                        msg.includes('invalid')) {
+                        localStorage.removeItem('token');
+                        setToken(null);
+                        setUser(null);
+                    } else {
+                        // Network/server error — keep token, user can retry
+                        console.warn('Auth check failed (keeping token):', err.message);
+                    }
                 }
             }
             setLoading(false);

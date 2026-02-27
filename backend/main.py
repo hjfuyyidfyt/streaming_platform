@@ -1,23 +1,35 @@
+# Load environment variables FIRST before any other imports
+# This is the single source of truth for all credentials
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+_env_path = Path(__file__).resolve().parent / '.env'
+load_dotenv(dotenv_path=_env_path, override=True)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine
 from .routers import videos, upload, stream, categories, analytics, thumbnails, auth, comments, likes, history, playlists, admin, subscriptions
 from .models import SQLModel
 import logging
-import os
-from dotenv import load_dotenv
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request
 
-# Load environment variables
-load_dotenv()
-
 # Logger setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Add file handler to root logger to capture all logs in upload_debug.log
+f_handler = logging.FileHandler('backend/upload_debug.log')
+f_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+f_handler.setFormatter(formatter)
+logging.getLogger().addHandler(f_handler)
+
 logger.info("Main router loaded.")
 
 # Rate Limiter
@@ -32,6 +44,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
+class RequestLoggerMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        method = request.method
+        client = request.client.host if request.client else "unknown"
+        logger.info(f"REQUEST: {method} {path} from {client}")
+        try:
+            response = await call_next(request)
+            logger.info(f"RESPONSE: {method} {path} -> {response.status_code}")
+            return response
+        except Exception as e:
+            logger.error(f"ERROR: {method} {path} -> {str(e)}")
+            raise
+
 app = FastAPI(
     title="Video Streaming API",
     description="Backend for Video Streaming Platform",
@@ -39,6 +65,7 @@ app = FastAPI(
 )
 
 # CORS Configuration - MUST BE ADDED FIRST before other middleware
+# For allow_credentials=True, allow_origins MUST be a list of specific origins, not ["*"]
 origins = [
     "http://localhost:5173",
     "http://localhost:3000",
@@ -48,7 +75,7 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all for development
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,6 +84,7 @@ app.add_middleware(
 # Other middleware (added after CORS)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 # Include Routers
@@ -74,9 +102,44 @@ app.include_router(playlists.router)
 app.include_router(admin.router)
 app.include_router(subscriptions.router)
 
+_keep_alive_task = None
+
+async def _db_keep_alive():
+    """Ping database every 4 minutes to prevent Neon free-tier auto-suspend."""
+    import asyncio
+    from sqlalchemy import text
+    from .database import engine
+    while True:
+        await asyncio.sleep(240)  # 4 minutes
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+                conn.commit()
+            logger.debug("DB keep-alive ping OK")
+        except Exception as e:
+            logger.warning(f"DB keep-alive ping failed: {e}")
+
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
+    global _keep_alive_task
     logger.info("Application starting up...")
+    # Start the Telegram upload queue worker
+    from .services.telegram_queue import telegram_queue
+    telegram_queue.start()
+    logger.info("Telegram upload queue started.")
+    # Start DB keep-alive
+    import asyncio
+    _keep_alive_task = asyncio.create_task(_db_keep_alive())
+    logger.info("DB keep-alive started (ping every 4 min).")
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    global _keep_alive_task
+    from .services.telegram_queue import telegram_queue
+    telegram_queue.stop()
+    if _keep_alive_task:
+        _keep_alive_task.cancel()
+    logger.info("Telegram upload queue + DB keep-alive stopped.")
 
 @app.get("/health")
 async def health_check():

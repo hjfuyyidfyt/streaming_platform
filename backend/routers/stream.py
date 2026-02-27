@@ -5,19 +5,12 @@ from ..database import get_session
 from ..models import Video, TelegramInfo, VideoResolution
 import os
 import httpx
-from telegram import Bot
-from dotenv import load_dotenv
 from pathlib import Path
 from typing import Optional
 import logging
+import time
 
 logger = logging.getLogger(__name__)
-
-# Load .env from backend directory
-env_path = Path(__file__).resolve().parent.parent / '.env'
-load_dotenv(dotenv_path=env_path)
-
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 router = APIRouter(
     prefix="/stream",
@@ -27,11 +20,43 @@ router = APIRouter(
 # Cache for file URLs to avoid repeated API calls
 # Format: {file_id: (url, timestamp)}
 file_url_cache = {}
-import time
-CACHE_EXPIRATION = 3000 # 50 minutes in seconds
+CACHE_EXPIRATION = 3000  # 50 minutes in seconds
+
+# Telethon client singleton for streaming
+_stream_client = None
+
+async def _get_stream_client():
+    """Get or create a Telethon client for streaming."""
+    global _stream_client
+    if _stream_client is not None and _stream_client.is_connected():
+        return _stream_client
+    
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    api_id = os.getenv("TELEGRAM_API_ID")
+    api_hash = os.getenv("TELEGRAM_API_HASH")
+    
+    if not token or not api_id or not api_hash:
+        raise ValueError("Telegram credentials not fully configured in .env")
+    
+    from telethon import TelegramClient
+    
+    session_path = str(Path(__file__).resolve().parent.parent / 'bot_session_stream')
+    _stream_client = TelegramClient(
+        session_path,
+        int(api_id),
+        api_hash,
+        timeout=120,
+    )
+    await _stream_client.start(bot_token=token)
+    logger.info("[Stream] Telethon client connected for streaming")
+    return _stream_client
+
 
 async def get_telegram_file_url(file_id: str) -> str:
-    """Get the download URL for a file from Telegram (with caching)."""
+    """
+    Get the download URL for a file from Telegram Bot API (with caching).
+    Falls back to Bot API for URL generation since Telethon doesn't directly provide URLs.
+    """
     current_time = time.time()
     
     if file_id in file_url_cache:
@@ -39,14 +64,27 @@ async def get_telegram_file_url(file_id: str) -> str:
         if current_time - timestamp < CACHE_EXPIRATION:
             return url
     
-    if not TOKEN:
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN not set")
     
-    bot = Bot(token=TOKEN)
-    file = await bot.get_file(file_id)
-    # Cache with timestamp
-    file_url_cache[file_id] = (file.file_path, current_time)
-    return file.file_path
+    # Use Bot API HTTP endpoint directly instead of the library
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"https://api.telegram.org/bot{token}/getFile",
+            params={"file_id": file_id},
+            timeout=30.0
+        )
+        data = resp.json()
+        
+        if not data.get("ok"):
+            raise ValueError(f"Telegram getFile failed: {data.get('description', 'unknown error')}")
+        
+        file_path = data["result"]["file_path"]
+        file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+        
+        file_url_cache[file_id] = (file_url, current_time)
+        return file_url
 
 
 @router.get("/{video_id}/resolutions")
@@ -91,35 +129,44 @@ async def get_video_resolutions(
 async def stream_video(
     video_id: int,
     resolution: Optional[str] = Query(None),
+    provider: Optional[str] = Query(None),
     session: Session = Depends(get_session)
 ):
-    """Stream video with proxy to avoid CORS/redirect issues."""
+    """Stream video - supports both Telegram and external providers."""
     video = session.get(Video, video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
     
-    file_id = None
+    # First, check for external embed sources (StreamTape, DoodStream)
+    from ..models import VideoSource, TelegramInfo
     
-    # If resolution specified, look for it in VideoSource
+    # Check for any available source
+    file_id = None
+    embed_url = None
+    found_provider = None
+    
+    # If resolution specified, look for it (filter by provider if given)
     if resolution:
-        from ..models import VideoSource
-        query = select(VideoSource).where(VideoSource.video_id == video_id).where(VideoSource.provider == "telegram")
+        query = select(VideoSource).where(VideoSource.video_id == video_id)
+        
+        # Filter by provider if specified
+        if provider:
+            query = query.where(VideoSource.provider == provider)
         
         if resolution.lower() == 'original':
-             # Check for None or 'Original' explicitly
-             src_record = session.exec(query.where(
-                 (VideoSource.resolution == None) | (VideoSource.resolution == "Original")
-             )).first()
+            src_record = session.exec(query.where(
+                (VideoSource.resolution == None) | (VideoSource.resolution == "Original")
+            )).first()
         else:
-             src_record = session.exec(query.where(VideoSource.resolution == resolution)).first()
+            src_record = session.exec(query.where(VideoSource.resolution == resolution)).first()
 
         if src_record:
             file_id = src_record.file_id
+            embed_url = src_record.embed_url
+            found_provider = src_record.provider
     
-    # Fallback to original
-    if not file_id:
-        # Try finding ANY telegram source
-        from ..models import VideoSource
+    # If no source found yet and provider is telegram (or no provider specified), fallback to telegram
+    if not file_id and (not provider or provider == 'telegram'):
         src_record = session.exec(
             select(VideoSource)
             .where(VideoSource.video_id == video_id)
@@ -128,17 +175,62 @@ async def stream_video(
         
         if src_record:
             file_id = src_record.file_id
-        elif video.telegram_info: # Legacy fallback
-             file_id = video.telegram_info.file_id
-        else:
-             raise HTTPException(status_code=404, detail="Video source not found")
+            found_provider = "telegram"
+        elif video.telegram_info:  # Legacy fallback
+            file_id = video.telegram_info.file_id
+            found_provider = "telegram"
     
+    if not file_id:
+        raise HTTPException(status_code=404, detail="Video source not found")
+    
+    # For external providers with embed URLs, redirect
+    if embed_url and found_provider in ("streamtape", "doodstream"):
+        return RedirectResponse(url=embed_url)
+    
+    # For Telegram sources, try to stream via Telethon
     try:
-        # Get Telegram file URL
-        file_url = await get_telegram_file_url(file_id)
-        logger.info(f"Streaming video {video_id} from: {file_url[:50]}...")
+        if found_provider == "telegram" and os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH"):
+            # Use Telethon to download and stream (supports large files)
+            client = await _get_stream_client()
+            _channel_id_str = os.getenv("TELEGRAM_CHANNEL_ID")
+            channel_id = int(_channel_id_str.strip()) if _channel_id_str else None
+            
+            if channel_id:
+                try:
+                    # Get the channel_message_id from TelegramInfo (NOT file_id!)
+                    # file_id is a Telegram Bot API string like "BAACAgIAA...", NOT a message ID integer
+                    tg_info = session.exec(
+                        select(TelegramInfo).where(TelegramInfo.video_id == video_id)
+                    ).first()
+                    
+                    msg_id = None
+                    if tg_info and tg_info.channel_message_id:
+                        msg_id = tg_info.channel_message_id
+                    
+                    if msg_id:
+                        message = await client.get_messages(channel_id, ids=msg_id)
+                        if message and message.media:
+                            async def telethon_stream():
+                                async for chunk in client.iter_download(message.media, chunk_size=65536):
+                                    yield chunk
+                            
+                            return StreamingResponse(
+                                telethon_stream(),
+                                media_type="video/mp4",
+                                headers={
+                                    "Accept-Ranges": "bytes",
+                                    "Content-Disposition": f"inline; filename=video_{video_id}.mp4"
+                                }
+                            )
+                    else:
+                        logger.warning(f"No channel_message_id found for video {video_id}, falling back to Bot API")
+                except Exception as e:
+                    logger.warning(f"Telethon stream failed, falling back to Bot API: {e}")
         
-        # Proxy stream the video
+        # Fallback: use Bot API URL (works for files < 20MB download)
+        file_url = await get_telegram_file_url(file_id)
+        logger.info(f"Streaming video {video_id} from Bot API URL")
+        
         async def stream_generator():
             async with httpx.AsyncClient(timeout=300.0) as client:
                 async with client.stream("GET", file_url) as response:

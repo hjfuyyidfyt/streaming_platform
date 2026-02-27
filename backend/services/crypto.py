@@ -1,10 +1,6 @@
 import os
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
-from dotenv import load_dotenv
-
-# Load env to get key if available
-load_dotenv()
 
 # Ensure we have a key (32 bytes for AES-256)
 ENV_KEY = os.getenv('ENCRYPTION_KEY', 'default_insecure_key_please_change_me_to_32_chars!!')

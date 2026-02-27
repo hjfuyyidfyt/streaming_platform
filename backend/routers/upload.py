@@ -38,18 +38,20 @@ router = APIRouter(
 TEMP_DIR = "backend/temp_uploads"
 TRANSCODE_DIR = "backend/temp_transcodes"
 THUMBNAIL_DIR = "backend/thumbnails"
+TG_UPLOADS_DIR = "backend/temp_tg_uploads"
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(TRANSCODE_DIR, exist_ok=True)
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
+os.makedirs(TG_UPLOADS_DIR, exist_ok=True)
 
 
 def background_full_process_task(video_id: int, source_file: str, title: str, original_resolution: str, active_providers: List[str]):
     """
-    Consolidated background task to:
-    1. Upload Original to all providers.
-    2. Transcode if needed.
-    3. Upload Transcoded to all providers.
-    4. Update DB as we go.
+    Consolidated background task:
+    Phase 1: Upload Original to FAST providers (StreamTape, DoodStream) in parallel.
+    Phase 2: Transcode if needed.
+    Phase 3: Upload Transcoded to FAST providers.
+    Telegram: Queued separately — uploads one-at-a-time in background queue.
     """
     import threading
     
@@ -59,14 +61,14 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
         
         async def process_async():
             try:
-                logger.info(f"[BG-{video_id}] Starting full background process (Async)...")
+                logger.info(f"[BG-{video_id}] Starting background process...")
                 from sqlmodel import Session as SqlSession
                 from ..models import VideoSource, TelegramInfo, Video
+                from ..services.telegram_queue import telegram_queue, TelegramUploadJob
                 
-                # Helper to save source
+                # Helper to save source to DB
                 def save_source(provider, res=None, file_id=None, embed_url=None):
                     with SqlSession(engine) as session_bg:
-                        # Fallback for resolution
                         if not res or res == "unknown":
                             v_rec = session_bg.get(Video, video_id)
                             res = v_rec.original_resolution if v_rec and v_rec.original_resolution != "unknown" else "Original"
@@ -82,43 +84,14 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
                         session_bg.commit()
                         logger.info(f"[BG-{video_id}] Source saved: {provider} - {res}")
 
-                # --- 1. UPLOAD ORIGINAL (PARALLEL) ---
-                logger.info(f"[BG-{video_id}] Starting parallel Original uploads...")
+                # ============================================================
+                # PHASE 1: FAST PROVIDERS — Original Upload (parallel)
+                # ============================================================
+                logger.info(f"[BG-{video_id}] Phase 1: Uploading original to fast providers...")
                 
-                async def tg_orig():
-                    try:
-                        data = await asyncio.wait_for(
-                            upload_video_to_telegram(source_file, caption=f"{title} [Source]", is_encrypted=False),
-                            timeout=600 # 10 mins
-                        )
-                        with SqlSession(engine) as session_bg:
-                            tg_info = TelegramInfo(
-                                video_id=video_id,
-                                file_id=data["file_id"],
-                                file_unique_id=data["file_unique_id"],
-                                file_size=data["file_size"],
-                                mime_type=data["mime_type"],
-                                channel_message_id=data["channel_message_id"]
-                            )
-                            session_bg.add(tg_info)
-                            # Get resolution if unknown
-                            res_val = original_resolution
-                            if not res_val or res_val == "unknown":
-                                v_rec = session_bg.get(Video, video_id)
-                                res_val = v_rec.original_resolution if v_rec else "Original"
-                            
-                            source = VideoSource(
-                                video_id=video_id,
-                                provider="telegram",
-                                resolution=res_val,
-                                file_id=data["file_id"]
-                            )
-                            session_bg.add(source)
-                            session_bg.commit()
-                            logger.info(f"[BG-{video_id}] Telegram Original saved.")
-                    except Exception as e:
-                        logger.error(f"[BG-{video_id}] Telegram Original Error: {e}")
-
+                fast_providers = [p for p in active_providers if p != 'telegram']
+                fast_tasks = []
+                
                 async def st_orig():
                     try:
                         st_res = await asyncio.wait_for(upload_to_streamtape(source_file, title=title), timeout=600)
@@ -135,35 +108,58 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
                     except Exception as e:
                         logger.error(f"[BG-{video_id}] DoodStream Original Error: {e}")
 
-                upload_tasks = []
-                if 'telegram' in active_providers: upload_tasks.append(tg_orig())
-                if 'streamtape' in active_providers: upload_tasks.append(st_orig())
-                if 'doodstream' in active_providers: upload_tasks.append(dd_orig())
+                if 'streamtape' in fast_providers: fast_tasks.append(st_orig())
+                if 'doodstream' in fast_providers: fast_tasks.append(dd_orig())
                 
-                if upload_tasks:
-                    await asyncio.gather(*upload_tasks)
+                if fast_tasks:
+                    await asyncio.gather(*fast_tasks)
+                
+                logger.info(f"[BG-{video_id}] Phase 1 complete — fast provider results saved.")
 
-                # --- 2. TRANSCODE ---
-                if check_ffmpeg_installed():
-                    logger.info(f"[BG-{video_id}] Starting transcoding...")
+                # ============================================================
+                # TELEGRAM QUEUE — Enqueue original (runs separately, no blocking)
+                # ============================================================
+                if 'telegram' in active_providers:
+                    # Copy source file to a safe TG_UPLOADS_DIR (the original temp file will be cleaned up)
+                    tg_copy_filename = f"{uuid.uuid4()}_orig_{os.path.basename(source_file)}"
+                    tg_copy_path = os.path.join(TG_UPLOADS_DIR, tg_copy_filename)
+                    try:
+                        shutil.copy2(source_file, tg_copy_path)
+                        telegram_queue.enqueue(TelegramUploadJob(
+                            video_id=video_id,
+                            file_path=tg_copy_path,
+                            title=title,
+                            resolution=original_resolution,
+                            caption=f"{title} [Source]",
+                            is_original=True,
+                            cleanup_after=True,  # Delete copy after upload
+                        ))
+                        logger.info(f"[BG-{video_id}] Telegram original queued (position: {telegram_queue.pending_count})")
+                    except Exception as e:
+                        logger.error(f"[BG-{video_id}] Failed to queue Telegram original: {e}")
+
+                # ============================================================
+                # PHASE 2: TRANSCODE
+                # ============================================================
+                ffmpeg_available = check_ffmpeg_installed()
+                logger.info(f"[BG-{video_id}] FFmpeg available: {ffmpeg_available}")
+                if not ffmpeg_available:
+                    logger.warning(f"[BG-{video_id}] FFmpeg NOT FOUND! Skipping transcoding.")
+                
+                if ffmpeg_available:
+                    logger.info(f"[BG-{video_id}] Phase 2: Starting transcoding...")
                     transcode_output_dir = os.path.join(TRANSCODE_DIR, str(video_id))
-                    # Transcoding is CPU intensive, we do it synchronously in this thread
                     transcoded_files = await loop.run_in_executor(None, lambda: transcode_video(source_file, transcode_output_dir, is_encrypted=False))
                     
                     if transcoded_files:
-                        logger.info(f"[BG-{video_id}] Transcoded: {list(transcoded_files.keys())}")
+                        logger.info(f"[BG-{video_id}] Transcoding SUCCESS! Created: {list(transcoded_files.keys())}")
                         
+                        # ============================================================
+                        # PHASE 3: Upload transcoded to FAST providers
+                        # ============================================================
                         for resolution, file_path in transcoded_files.items():
-                            # For each resolution, upload to all providers in parallel
                             res_tasks = []
                             
-                            async def tg_res(res, path):
-                                try:
-                                    tg_data = await asyncio.wait_for(upload_video_to_telegram(path, caption=f"[{res}]", is_encrypted=False), timeout=300)
-                                    save_source("telegram", res, tg_data["file_id"])
-                                except Exception as e:
-                                    logger.error(f"[BG-{video_id}] Telegram {res} Error: {e}")
-
                             async def st_res_task(res, path):
                                 try:
                                     st_res_data = await asyncio.wait_for(upload_to_streamtape(path, title=f"{title} {res}"), timeout=300)
@@ -180,19 +176,40 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
                                 except Exception as e:
                                     logger.error(f"[BG-{video_id}] DoodStream {res} Error: {e}")
 
-                            if 'telegram' in active_providers: res_tasks.append(tg_res(resolution, file_path))
-                            if 'streamtape' in active_providers: res_tasks.append(st_res_task(resolution, file_path))
-                            if 'doodstream' in active_providers: res_tasks.append(dd_res_task(resolution, file_path))
+                            if 'streamtape' in fast_providers: res_tasks.append(st_res_task(resolution, file_path))
+                            if 'doodstream' in fast_providers: res_tasks.append(dd_res_task(resolution, file_path))
                             
                             if res_tasks:
                                 await asyncio.gather(*res_tasks)
                             
+                            # Queue transcoded to Telegram too
+                            if 'telegram' in active_providers:
+                                # Move to safe TG_UPLOADS_DIR instead of copying in-place
+                                tg_res_filename = f"{uuid.uuid4()}_{resolution}_{os.path.basename(file_path)}"
+                                tg_res_dest = os.path.join(TG_UPLOADS_DIR, tg_res_filename)
+                                try:
+                                    shutil.copy2(file_path, tg_res_dest)
+                                    telegram_queue.enqueue(TelegramUploadJob(
+                                        video_id=video_id,
+                                        file_path=tg_res_dest,
+                                        title=title,
+                                        resolution=resolution,
+                                        caption=f"{title} [{resolution}]",
+                                        is_original=False,
+                                        cleanup_after=True,
+                                    ))
+                                except Exception as e:
+                                    logger.error(f"[BG-{video_id}] Failed to queue Telegram {resolution}: {e}")
+                            
                             cleanup_file(file_path)
+                    else:
+                        logger.warning(f"[BG-{video_id}] Transcoding returned NO files")
                     
                     if os.path.exists(transcode_output_dir):
                         shutil.rmtree(transcode_output_dir, ignore_errors=True)
                 
-                logger.info(f"[BG-{video_id}] All tasks complete!")
+                logger.info(f"[BG-{video_id}] All fast tasks complete! "
+                           f"Telegram queue: {telegram_queue.pending_count} pending")
                 
             except Exception as e:
                 logger.error(f"[BG-{video_id}] Process Error: {e}", exc_info=True)
@@ -205,6 +222,119 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
             loop.close()
     
     # Start in background thread
+    threading.Thread(target=run_in_thread, daemon=True).start()
+
+
+def transcode_only_task(video_id: int, source_file: str, title: str, original_resolution: str, active_providers: List[str]):
+    """
+    Transcode-only background task for reprocessing.
+    Only does Phase 2+3: Transcode + Upload transcoded to fast providers.
+    Does NOT re-upload original or delete source file.
+    """
+    import threading
+    
+    def run_in_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def process_async():
+            try:
+                logger.info(f"[REPROCESS-{video_id}] Starting transcode-only reprocess...")
+                from sqlmodel import Session as SqlSession
+                from ..models import VideoSource, Video
+                
+                def save_source(provider, res=None, file_id=None, embed_url=None):
+                    with SqlSession(engine) as session_bg:
+                        if not res or res == "unknown":
+                            res = original_resolution if original_resolution != "unknown" else "Original"
+                        # Check if this source already exists to avoid duplicates
+                        existing = session_bg.exec(
+                            select(VideoSource).where(
+                                VideoSource.video_id == video_id,
+                                VideoSource.provider == provider,
+                                VideoSource.resolution == res
+                            )
+                        ).first()
+                        if existing:
+                            logger.info(f"[REPROCESS-{video_id}] Source already exists: {provider} - {res}, skipping")
+                            return
+                        source = VideoSource(
+                            video_id=video_id,
+                            provider=provider,
+                            resolution=res,
+                            file_id=file_id,
+                            embed_url=embed_url
+                        )
+                        session_bg.add(source)
+                        session_bg.commit()
+                        logger.info(f"[REPROCESS-{video_id}] Source saved: {provider} - {res}")
+                
+                fast_providers = [p for p in active_providers if p != 'telegram']
+                
+                # Phase 2: Transcode
+                ffmpeg_available = check_ffmpeg_installed()
+                if not ffmpeg_available:
+                    logger.error(f"[REPROCESS-{video_id}] FFmpeg NOT FOUND! Cannot transcode.")
+                    return
+                
+                logger.info(f"[REPROCESS-{video_id}] Starting transcoding...")
+                transcode_output_dir = os.path.join(TRANSCODE_DIR, str(video_id))
+                transcoded_files = await loop.run_in_executor(
+                    None, lambda: transcode_video(source_file, transcode_output_dir, is_encrypted=False)
+                )
+                
+                if not transcoded_files:
+                    logger.warning(f"[REPROCESS-{video_id}] Transcoding returned NO files")
+                    return
+                
+                logger.info(f"[REPROCESS-{video_id}] Transcoding SUCCESS! Created: {list(transcoded_files.keys())}")
+                
+                # Phase 3: Upload transcoded to fast providers
+                for resolution, file_path in transcoded_files.items():
+                    res_tasks = []
+                    
+                    async def st_res_task(res, path):
+                        try:
+                            st_res_data = await asyncio.wait_for(
+                                upload_to_streamtape(path, title=f"{title} {res}"), timeout=300
+                            )
+                            if st_res_data:
+                                save_source("streamtape", res, st_res_data['file_id'], st_res_data['embed_url'])
+                        except Exception as e:
+                            logger.error(f"[REPROCESS-{video_id}] StreamTape {res} Error: {e}")
+                    
+                    async def dd_res_task(res, path):
+                        try:
+                            dd_res_data = await asyncio.wait_for(
+                                upload_to_doodstream(path, title=f"{title} {res}"), timeout=300
+                            )
+                            if dd_res_data:
+                                save_source("doodstream", res, dd_res_data['file_id'], dd_res_data['embed_url'])
+                        except Exception as e:
+                            logger.error(f"[REPROCESS-{video_id}] DoodStream {res} Error: {e}")
+                    
+                    if 'streamtape' in fast_providers: res_tasks.append(st_res_task(resolution, file_path))
+                    if 'doodstream' in fast_providers: res_tasks.append(dd_res_task(resolution, file_path))
+                    
+                    if res_tasks:
+                        await asyncio.gather(*res_tasks)
+                    
+                    cleanup_file(file_path)
+                
+                if os.path.exists(transcode_output_dir):
+                    shutil.rmtree(transcode_output_dir, ignore_errors=True)
+                
+                logger.info(f"[REPROCESS-{video_id}] Reprocess complete!")
+                
+            except Exception as e:
+                logger.error(f"[REPROCESS-{video_id}] Error: {e}", exc_info=True)
+            # NOTE: Do NOT delete source_file — keep for future reprocessing
+        
+        try:
+            loop.run_until_complete(process_async())
+        finally:
+            loop.close()
+    
     threading.Thread(target=run_in_thread, daemon=True).start()
 
 
@@ -285,6 +415,10 @@ async def upload_video(
         video.thumbnail_url = f"/thumbnails/{video.id}"
         session.add(video)
         session.commit()
+
+    # Invalidate video list cache to show new video on home page
+    from ..services.cache import app_cache
+    app_cache.invalidate("videos_skip_0")
 
     # 5. Hand off EVERYTHING to background task
     background_full_process_task(video.id, temp_file_path, title, original_resolution, active_providers)
