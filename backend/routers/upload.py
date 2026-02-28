@@ -5,7 +5,7 @@ from ..database import get_session, engine
 from ..models import Video, Category, TelegramInfo, VideoResolution, User, VideoPublic
 from ..services.telegram_uploader import upload_video_to_telegram, upload_photo_to_telegram
 from ..services.crypto import encrypt_stream_to_file
-from ..services.transcoder import get_video_info, transcode_video, check_ffmpeg_installed
+from ..services.transcoder import get_video_info, transcode_video, check_ffmpeg_installed, extract_thumbnail_local
 from ..services.external_storage import upload_to_streamtape, upload_to_doodstream
 from ..models import StorageMode
 from .auth import get_current_user, require_user
@@ -105,6 +105,14 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
                         dd_res = await asyncio.wait_for(upload_to_doodstream(source_file, title=title), timeout=600)
                         if dd_res:
                             save_source("doodstream", original_resolution, dd_res['file_id'], dd_res['embed_url'])
+                            # Fallback Doodstream thumbnail if not set
+                            with SqlSession(engine) as session_thumb:
+                                v_rec = session_thumb.get(Video, video_id)
+                                if v_rec and not v_rec.thumbnail_url and dd_res.get('thumbnail_url'):
+                                    v_rec.thumbnail_url = dd_res['thumbnail_url']
+                                    session_thumb.add(v_rec)
+                                    session_thumb.commit()
+                                    logger.info(f"[BG-{video_id}] Used DoodStream splash_img as fallback thumbnail")
                     except Exception as e:
                         logger.error(f"[BG-{video_id}] DoodStream Original Error: {e}")
 
@@ -412,9 +420,19 @@ async def upload_video(
         thumb_path = os.path.join(THUMBNAIL_DIR, f"{video.id}{thumb_ext}")
         with open(thumb_path, "wb") as buffer:
             shutil.copyfileobj(thumbnail.file, buffer)
-        video.thumbnail_url = f"/thumbnails/{video.id}"
+        video.thumbnail_url = f"/thumbnails/{video.id}{thumb_ext}"
         session.add(video)
         session.commit()
+    else:
+        # Try local extraction if FFmpeg is available
+        thumb_path = os.path.join(THUMBNAIL_DIR, f"{video.id}.jpg")
+        success = extract_thumbnail_local(temp_file_path, thumb_path, is_encrypted=False)
+        if success:
+            video.thumbnail_url = f"/thumbnails/{video.id}.jpg"
+            session.add(video)
+            session.commit()
+        else:
+            logger.info("Local thumbnail extraction skipped/failed. Waiting for fallback in background task.")
 
     # Invalidate video list cache to show new video on home page
     from ..services.cache import app_cache

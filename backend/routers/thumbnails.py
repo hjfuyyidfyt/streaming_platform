@@ -22,13 +22,21 @@ os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 @router.get("/{video_id}")
 async def get_thumbnail(
-    video_id: int
+    video_id: str
 ):
     """Get thumbnail for a video. Returns uploaded image (local) or SVG placeholder."""
     
+    # Clean up video_id (remove .jpg if present, it happens due to frontend using the raw URL)
+    clean_id_str = video_id.split(".")[0]
+    
+    try:
+        clean_id = int(clean_id_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid video ID format")
+    
     # 1. Check for saved thumbnail locally FIRST (no DB needed = instant)
     for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
-        thumb_path = os.path.join(THUMBNAIL_DIR, f"{video_id}{ext}")
+        thumb_path = os.path.join(THUMBNAIL_DIR, f"{clean_id}{ext}")
         if os.path.exists(thumb_path):
             return FileResponse(thumb_path)
     
@@ -41,17 +49,17 @@ async def get_thumbnail(
         logger.error(f"DB connection failed for thumbnail: {e}")
         # Return generic placeholder without video title
         return Response(
-            content=create_placeholder_image(f"Video {video_id}"),
+            content=create_placeholder_image(f"Video {clean_id}"),
             media_type="image/svg+xml"
         )
     
     try:
-        video = session.get(Video, video_id)
+        video = session.get(Video, clean_id)
         if not video:
             raise HTTPException(status_code=404, detail="Video not found")
         
         # 3. Check Telegram thumbnail (proxy from TG)
-        tg_info = session.exec(select(TelegramInfo).where(TelegramInfo.video_id == video_id)).first()
+        tg_info = session.exec(select(TelegramInfo).where(TelegramInfo.video_id == clean_id)).first()
         if tg_info and tg_info.thumbnail_file_id:
             try:
                 content = await get_telegram_file_bytes(tg_info.thumbnail_file_id)

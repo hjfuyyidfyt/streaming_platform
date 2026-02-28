@@ -146,6 +146,45 @@ def get_video_info(file_path: str, is_encrypted: bool = True) -> Dict:
         logger.error(f"Error getting video info: {e}")
         return {}
 
+def extract_thumbnail_local(file_path: str, output_path: str, time_pos: str = "00:00:01", is_encrypted: bool = True) -> bool:
+    """
+    Extract a single frame from the video as a thumbnail using FFmpeg.
+    """
+    try:
+        if not check_ffmpeg_installed():
+            logger.warning("FFmpeg not installed, cannot extract thumbnail locally")
+            return False
+
+        with decrypted_temp_file(file_path, is_encrypted=is_encrypted) as temp_path:
+            cmd = [
+                "ffmpeg",
+                "-y",                   # Overwrite output files
+                "-ss", time_pos,        # Seek to position
+                "-i", temp_path,        # Input file
+                "-vframes", "1",        # Output 1 frame
+                "-q:v", "2",            # Quality (lower is better, 2 is good)
+                "-f", "image2",         # Output format
+                output_path
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0 and os.path.exists(output_path):
+                logger.info(f"Successfully extracted thumbnail to {output_path}")
+                return True
+            else:
+                logger.error(f"Thumbnail extraction failed: {result.stderr}")
+                return False
+                
+    except Exception as e:
+        logger.error(f"Error extracting thumbnail: {e}")
+        return False
+
 def get_lower_resolutions(source_resolution: str) -> List[str]:
     """
     Get ALL lower resolutions than source.
