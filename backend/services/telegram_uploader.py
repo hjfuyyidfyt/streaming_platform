@@ -125,7 +125,7 @@ def _parse_channel_id(channel_id_str: str) -> int:
         raise ValueError(f"Invalid TELEGRAM_CHANNEL_ID: '{channel_id_str}' - {e}")
 
 
-async def upload_video_to_telegram(file_path: str, caption: str = "", is_encrypted: bool = True):
+async def upload_video_to_telegram(file_path: str, caption: str = "", is_encrypted: bool = True, thumbnail_path: str = None):
     """
     Uploads a video to the configured Telegram channel using Telethon.
     Supports files up to 2GB.
@@ -133,6 +133,9 @@ async def upload_video_to_telegram(file_path: str, caption: str = "", is_encrypt
     """
     if not os.getenv("TELEGRAM_CHANNEL_ID"):
         raise ValueError("TELEGRAM_CHANNEL_ID is not set")
+    
+    from telethon.tl.types import DocumentAttributeVideo
+    from .transcoder import get_video_info
     
     client = await _get_client()
     entity = await _get_channel_entity()
@@ -187,12 +190,27 @@ async def upload_video_to_telegram(file_path: str, caption: str = "", is_encrypt
                 progress_callback=progress_callback,
             )
             
+            # Get video metadata for proper attributes to prevent quality loss
+            v_info = get_video_info(file_path, is_encrypted=is_encrypted)
+            v_width = v_info.get("width", 0)
+            v_height = v_info.get("height", 0)
+            v_duration = int(v_info.get("duration", 0))
+
+            attributes = [
+                DocumentAttributeVideo(
+                    duration=v_duration,
+                    w=v_width,
+                    h=v_height,
+                    supports_streaming=True
+                )
+            ]
+
             # Step 2: Send the already-uploaded file to channel
             message = await client.send_file(
                 entity,
                 uploaded_file,
                 caption=caption,
-                supports_streaming=True,
+                attributes=attributes,
                 force_document=False,     # Send as video, not document
             )
             

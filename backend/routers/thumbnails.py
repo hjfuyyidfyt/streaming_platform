@@ -20,6 +20,29 @@ THUMBNAIL_DIR = "backend/thumbnails"
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 
+@router.get("/download-all/{video_id}")
+async def download_all_thumbnails(
+    video_id: str
+):
+    """Admin endpoint to download all extracted thumbnails as a ZIP file."""
+    # Clean up video_id
+    clean_id_str = video_id.split(".")[0]
+    
+    try:
+        clean_id = int(clean_id_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid video ID format")
+        
+    zip_path = os.path.join(THUMBNAIL_DIR, f"{clean_id}_thumbs.zip")
+    if os.path.exists(zip_path):
+        return FileResponse(
+            zip_path, 
+            media_type="application/zip", 
+            filename=f"video_{clean_id}_thumbnails.zip"
+        )
+    else:
+        raise HTTPException(status_code=404, detail="Thumbnails ZIP not found.")
+
 @router.get("/{video_id}")
 async def get_thumbnail(
     video_id: str

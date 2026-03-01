@@ -146,44 +146,102 @@ def get_video_info(file_path: str, is_encrypted: bool = True) -> Dict:
         logger.error(f"Error getting video info: {e}")
         return {}
 
-def extract_thumbnail_local(file_path: str, output_path: str, time_pos: str = "00:00:01", is_encrypted: bool = True) -> bool:
+import zipfile
+
+def extract_multi_thumbnails(file_path: str, output_dir: str, video_id: int, is_encrypted: bool = True) -> tuple[Optional[str], Optional[str]]:
     """
-    Extract a single frame from the video as a thumbnail using FFmpeg.
+    Extract 10 thumbnails at regular intervals from the video and package them into a ZIP file.
+    Returns (first_thumbnail_path, zip_path) on success, or (None, None) on failure.
     """
     try:
         if not check_ffmpeg_installed():
-            logger.warning("FFmpeg not installed, cannot extract thumbnail locally")
-            return False
+            logger.warning("FFmpeg not installed, cannot extract thumbnails")
+            return None, None
+
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Get duration
+        v_info = get_video_info(file_path, is_encrypted=is_encrypted)
+        duration = float(v_info.get("duration", 0))
+        if duration <= 0:
+            logger.warning("Could not determine video duration for thumbnail extraction.")
+            duration = 10.0 # fallback
+
+        # Calculate 10 timestamps (avoid exact 0 and exact end)
+        interval = duration / 11
+        timestamps = [interval * i for i in range(1, 11)]
+
+        zip_filename = f"{video_id}_thumbs.zip"
+        zip_path = os.path.join(output_dir, zip_filename)
+        first_thumb_path = os.path.join(output_dir, f"{video_id}.jpg")
+        
+        extracted_files = []
 
         with decrypted_temp_file(file_path, is_encrypted=is_encrypted) as temp_path:
-            cmd = [
-                "ffmpeg",
-                "-y",                   # Overwrite output files
-                "-ss", time_pos,        # Seek to position
-                "-i", temp_path,        # Input file
-                "-vframes", "1",        # Output 1 frame
-                "-q:v", "2",            # Quality (lower is better, 2 is good)
-                "-f", "image2",         # Output format
-                output_path
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode == 0 and os.path.exists(output_path):
-                logger.info(f"Successfully extracted thumbnail to {output_path}")
-                return True
-            else:
-                logger.error(f"Thumbnail extraction failed: {result.stderr}")
-                return False
+            for i, ts in enumerate(timestamps):
+                # Format timestamp to HH:MM:SS.xxx
+                hours = int(ts // 3600)
+                minutes = int((ts % 3600) // 60)
+                seconds = ts % 60
+                ts_str = f"{hours:02d}:{minutes:02d}:{seconds:06.3f}"
                 
+                # First thumbnail is named ID.jpg, others are temp
+                if i == 0:
+                    out_name = first_thumb_path
+                else:
+                    out_name = os.path.join(output_dir, f"temp_{video_id}_thumb_{i+1}.jpg")
+                
+                cmd = [
+                    "ffmpeg",
+                    "-y",                   # Overwrite output files
+                    "-ss", ts_str,          # Seek to position
+                    "-i", temp_path,        # Input file
+                    "-vframes", "1",        # Output 1 frame
+                    "-q:v", "2",            # Quality (lower is better, 2 is good)
+                    "-f", "image2",         # Output format
+                    out_name
+                ]
+                
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                if result.returncode == 0 and os.path.exists(out_name):
+                    extracted_files.append((out_name, f"thumbnail_{i+1}.jpg"))
+                else:
+                    logger.warning(f"Failed to extract thumbnail at {ts_str}: {result.stderr}")
+        
+        if not extracted_files:
+            logger.error("Failed to extract any thumbnails.")
+            return None, None
+            
+        # Create ZIP archive
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for file_path_disk, archive_name in extracted_files:
+                    zipf.write(file_path_disk, archive_name)
+            logger.info(f"Successfully created thumbnail ZIP at {zip_path}")
+        except Exception as e:
+            logger.error(f"Error creating ZIP file: {e}")
+            return None, None
+            
+        # Cleanup temporary loose thumbnails (keep the first one)
+        for file_path_disk, _ in extracted_files:
+            if file_path_disk != first_thumb_path and os.path.exists(file_path_disk):
+                try:
+                    os.remove(file_path_disk)
+                except OSError:
+                    pass
+
+        return first_thumb_path, zip_path
+
     except Exception as e:
-        logger.error(f"Error extracting thumbnail: {e}")
-        return False
+        logger.error(f"Error extracting multi thumbnails: {e}", exc_info=True)
+        return None, None
 
 def get_lower_resolutions(source_resolution: str) -> List[str]:
     """

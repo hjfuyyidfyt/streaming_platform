@@ -18,7 +18,7 @@ TEMP_DIR = "backend/temp_uploads"
 TRANSCODE_DIR = "backend/temp_transcodes"
 THUMBNAIL_DIR = "backend/thumbnails"
 
-def get_dir_size(path):
+def get_dir_size(path, extension=None):
     total = 0
     count = 0
     files = []
@@ -27,6 +27,8 @@ def get_dir_size(path):
             with os.scandir(path) as it:
                 for entry in it:
                     if entry.is_file():
+                        if extension and not entry.name.endswith(extension):
+                            continue
                         total += entry.stat().st_size
                         count += 1
                         files.append({"name": entry.name, "size": entry.stat().st_size})
@@ -34,6 +36,8 @@ def get_dir_size(path):
                         # Simple recursive size
                         for root, _, filenames in os.walk(entry.path):
                             for f in filenames:
+                                if extension and not f.endswith(extension):
+                                    continue
                                 fp = os.path.join(root, f)
                                 total += os.path.getsize(fp)
                                 count += 1
@@ -65,7 +69,7 @@ async def get_storage_stats(
 
     upload_size, upload_count, upload_files = get_dir_size(TEMP_DIR)
     transcode_size, transcode_count, transcode_files = get_dir_size(TRANSCODE_DIR)
-    thumb_size, thumb_count, thumb_files = get_dir_size(THUMBNAIL_DIR)
+    thumb_size, thumb_count, thumb_files = get_dir_size(THUMBNAIL_DIR, extension=".zip")
     
     return {
         "temp_uploads": {
@@ -124,12 +128,11 @@ async def cleanup_storage(
                 logger.error(f"Failed to delete {path}: {e}")
 
     if target in ["all", "thumbnails"]:
-        # Only delete if we are sure they are backed up? 
-        # User explicitly asked to delete residual files.
+        # Only delete if they are ZIP files, to keep primary .jpg thumbnails intact
         for f in os.listdir(THUMBNAIL_DIR):
             path = os.path.join(THUMBNAIL_DIR, f)
             try:
-                if os.path.isfile(path) and f != ".gitkeep":
+                if os.path.isfile(path) and f != ".gitkeep" and f.endswith(".zip"):
                     os.remove(path)
                     cleaned.append(f"thumbnails/{f}")
             except Exception as e:

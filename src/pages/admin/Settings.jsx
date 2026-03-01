@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { api } from '../../services/api.js';
+import { api, API_URL } from '../../services/api.js';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { Save, Server, Globe, Shield, Megaphone, Check, ChevronRight, Sparkles, Send, Terminal, Bot, Trash2, AlertTriangle, Search } from 'lucide-react';
+import { Save, Server, Globe, Shield, Megaphone, Check, ChevronRight, Sparkles, Send, Terminal, Bot, Trash2, AlertTriangle, Search, Download, Unlock, FileArchive } from 'lucide-react';
 
 const Settings = () => {
     const { token } = useAuth();
@@ -431,6 +431,26 @@ const Settings = () => {
             text: '__DELETE_PROMPT__',
             time: ts(),
             autoPasteId: videoId
+        }]);
+    };
+
+    const handleVideoOptionsDialog = (video) => {
+        const ts = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setChatHistory(prev => [...prev, {
+            role: 'assistant',
+            text: '__VIDEO_OPTIONS__',
+            videoOptionsData: video,
+            time: ts()
+        }]);
+    };
+
+    const handleSendZipFile = (video) => {
+        const ts = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setChatHistory(prev => [...prev, {
+            role: 'assistant',
+            text: '__ZIP_FILE__',
+            zipData: video,
+            time: ts()
         }]);
     };
 
@@ -889,9 +909,9 @@ const Settings = () => {
                                                                             return (
                                                                                 <div key={v.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.05] hover:border-indigo-500/20 transition-all group">
                                                                                     <button
-                                                                                        onClick={() => handleVideoIdClick(v.id)}
+                                                                                        onClick={() => handleVideoOptionsDialog(v)}
                                                                                         className="flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/25 flex items-center justify-center text-indigo-300 text-xs font-bold hover:from-indigo-500/30 hover:to-purple-500/30 hover:border-indigo-400/40 transition-all active:scale-90 cursor-pointer"
-                                                                                        title={`Click to delete video #${v.id}`}
+                                                                                        title={`View options for video #${v.id}`}
                                                                                     >
                                                                                         #{v.id}
                                                                                     </button>
@@ -902,7 +922,7 @@ const Settings = () => {
                                                                                     <button
                                                                                         onClick={() => handleVideoIdClick(v.id)}
                                                                                         className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all active:scale-90"
-                                                                                        title="Delete this video"
+                                                                                        title="Quick delete this video"
                                                                                     >
                                                                                         <Trash2 className="w-3.5 h-3.5" />
                                                                                     </button>
@@ -910,7 +930,78 @@ const Settings = () => {
                                                                             );
                                                                         })}
                                                                     </div>
-                                                                    <p className="text-[10px] text-gray-600 border-t border-white/[0.04] pt-2">Click a video ID or the 🗑️ icon to open the delete prompt</p>
+                                                                    <p className="text-[10px] text-gray-600 border-t border-white/[0.04] pt-2">Click a video ID to view action options</p>
+                                                                </div>
+                                                            ) : msg.text === '__VIDEO_OPTIONS__' && msg.videoOptionsData ? (
+                                                                <div className="space-y-4 min-w-[320px]">
+                                                                    <div className="border border-indigo-500/20 bg-indigo-500/5 p-3 rounded-lg">
+                                                                        <p className="text-[11px] text-indigo-300 uppercase tracking-wider font-semibold mb-1">Actions for Video</p>
+                                                                        <p className="text-[13px] text-white font-medium truncate">{msg.videoOptionsData.title}</p>
+                                                                        <p className="text-[10px] text-gray-500 mt-0.5">ID: {msg.videoOptionsData.id} • {msg.videoOptionsData.views} views</p>
+                                                                    </div>
+
+                                                                    <div className="grid grid-cols-1 gap-2">
+                                                                        <button
+                                                                            onClick={() => handleVideoIdClick(msg.videoOptionsData.id)}
+                                                                            className="flex items-center gap-3 p-3 bg-red-500/10 border border-red-500/20 rounded-xl hover:bg-red-500/20 transition-all text-left group"
+                                                                        >
+                                                                            <div className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center text-red-400 group-hover:bg-red-500 group-hover:text-white transition-colors">
+                                                                                <Trash2 className="w-4 h-4" />
+                                                                            </div>
+                                                                            <div>
+                                                                                <p className="text-sm font-semibold text-red-300">Delete Video</p>
+                                                                                <p className="text-[10px] text-red-400/70">Open the deletion prompt for this video</p>
+                                                                            </div>
+                                                                        </button>
+
+                                                                        <button
+                                                                            onClick={() => handleSendZipFile(msg.videoOptionsData)}
+                                                                            className="flex items-center gap-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl hover:bg-blue-500/20 transition-all text-left group"
+                                                                        >
+                                                                            <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                                                                                <Download className="w-4 h-4" />
+                                                                            </div>
+                                                                            <div>
+                                                                                <p className="text-sm font-semibold text-blue-300">Generate Thumbnails ZIP</p>
+                                                                                <p className="text-[10px] text-blue-400/70">Fetch ZIP file containing all 10 video thumbnails</p>
+                                                                            </div>
+                                                                        </button>
+
+                                                                        <button
+                                                                            onClick={() => alert("This feature is coming soon!")}
+                                                                            className="flex items-center gap-3 p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl hover:bg-emerald-500/20 transition-all text-left group"
+                                                                        >
+                                                                            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                                                                                <Unlock className="w-4 h-4" />
+                                                                            </div>
+                                                                            <div>
+                                                                                <p className="text-sm font-semibold text-emerald-300">Decode</p>
+                                                                                <p className="text-[10px] text-emerald-400/70 border border-emerald-400/30 bg-emerald-500/20 px-1.5 rounded inline-block">Coming Soon</p>
+                                                                                <p className="text-[9px] text-gray-500 mt-1">Provide password to decode 9 remaining thumbnails</p>
+                                                                            </div>
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            ) : msg.text === '__ZIP_FILE__' && msg.zipData ? (
+                                                                <div className="min-w-[280px] bg-gradient-to-br from-indigo-900/40 to-indigo-800/20 border border-indigo-500/30 rounded-xl p-4 shadow-lg">
+                                                                    <div className="flex items-center gap-3 mb-3">
+                                                                        <div className="w-10 h-10 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-300">
+                                                                            <FileArchive className="w-5 h-5" />
+                                                                        </div>
+                                                                        <div>
+                                                                            <p className="text-sm font-bold text-white truncate max-w-[180px]">video_{msg.zipData.id}_thumbnails.zip</p>
+                                                                            <p className="text-[10px] text-indigo-300/80">ZIP Archive • 10 Images</p>
+                                                                        </div>
+                                                                    </div>
+                                                                    <a
+                                                                        href={`${API_URL}/thumbnails/download-all/${msg.zipData.id}`}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                        className="w-full flex justify-center items-center gap-2 py-2 px-4 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-indigo-500/20"
+                                                                    >
+                                                                        <Download className="w-3.5 h-3.5" />
+                                                                        Download ZIP File
+                                                                    </a>
                                                                 </div>
                                                             ) : (
                                                                 <>

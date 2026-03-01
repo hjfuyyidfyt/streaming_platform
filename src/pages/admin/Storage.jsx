@@ -53,7 +53,9 @@ const Storage = () => {
                             <div className="flex justify-between items-start mb-4">
                                 <div className="flex items-center gap-2">
                                     <Folder className="w-5 h-5 text-yellow-500" />
-                                    <h2 className="font-semibold capitalize">{key.replace('_', ' ')}</h2>
+                                    <h2 className="font-semibold capitalize">
+                                        {key === 'thumbnails' ? 'Thumbnail ZIPs' : key.replace('_', ' ')}
+                                    </h2>
                                 </div>
                                 <button
                                     onClick={() => handleCleanup(key)}
@@ -98,8 +100,9 @@ const Storage = () => {
 
             <div className="mt-8 p-4 bg-yellow-900/20 border border-yellow-700/50 rounded text-sm text-yellow-200">
                 <p className="font-bold mb-1">Note:</p>
-                <p>Files in <b>temp_uploads</b> and <b>temp_transcodes</b> should be automatically deleted after processing. <b>Thumbnails</b> are stored locally for fast access but backed up to Telegram.</p>
-                <p className="mt-2">Deleting <b>thumbnails</b> locally will force them to be fetched from Telegram (slower) on demand.</p>
+                <p>Files in <b>temp_uploads</b> and <b>temp_transcodes</b> should be automatically deleted after processing. <br />
+                    <b>Thumbnail ZIPs</b> represent the extracted 10-frame packages from videos.</p>
+                <p className="mt-2 text-indigo-300">Deleting <b>Thumbnail ZIPs</b> will ONLY remove the `.zip` packages to save server space. It will <b>NOT</b> delete the primary `.jpg` thumbnails displayed on the website.</p>
             </div>
         </div>
     );

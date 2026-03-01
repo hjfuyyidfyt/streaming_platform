@@ -5,7 +5,7 @@ from ..database import get_session, engine
 from ..models import Video, Category, TelegramInfo, VideoResolution, User, VideoPublic
 from ..services.telegram_uploader import upload_video_to_telegram, upload_photo_to_telegram
 from ..services.crypto import encrypt_stream_to_file
-from ..services.transcoder import get_video_info, transcode_video, check_ffmpeg_installed, extract_thumbnail_local
+from ..services.transcoder import get_video_info, transcode_video, check_ffmpeg_installed, extract_multi_thumbnails
 from ..services.external_storage import upload_to_streamtape, upload_to_doodstream
 from ..models import StorageMode
 from .auth import get_current_user, require_user
@@ -140,7 +140,7 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
                             resolution=original_resolution,
                             caption=f"{title} [Source]",
                             is_original=True,
-                            cleanup_after=True,  # Delete copy after upload
+                            cleanup_after=True  # Delete copy after upload
                         ))
                         logger.info(f"[BG-{video_id}] Telegram original queued (position: {telegram_queue.pending_count})")
                     except Exception as e:
@@ -204,7 +204,7 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
                                         resolution=resolution,
                                         caption=f"{title} [{resolution}]",
                                         is_original=False,
-                                        cleanup_after=True,
+                                        cleanup_after=True
                                     ))
                                 except Exception as e:
                                     logger.error(f"[BG-{video_id}] Failed to queue Telegram {resolution}: {e}")
@@ -425,12 +425,12 @@ async def upload_video(
         session.commit()
     else:
         # Try local extraction if FFmpeg is available
-        thumb_path = os.path.join(THUMBNAIL_DIR, f"{video.id}.jpg")
-        success = extract_thumbnail_local(temp_file_path, thumb_path, is_encrypted=False)
-        if success:
+        first_thumb_path, zip_path = extract_multi_thumbnails(temp_file_path, THUMBNAIL_DIR, video.id, is_encrypted=False)
+        if first_thumb_path:
             video.thumbnail_url = f"/thumbnails/{video.id}.jpg"
             session.add(video)
             session.commit()
+            logger.info(f"Local multi-thumbnail extraction complete. Created ZIP at {zip_path}")
         else:
             logger.info("Local thumbnail extraction skipped/failed. Waiting for fallback in background task.")
 
