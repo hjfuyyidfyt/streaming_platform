@@ -64,6 +64,14 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
                 logger.info(f"[BG-{video_id}] Starting background process...")
                 from sqlmodel import Session as SqlSession
                 from ..models import VideoSource, TelegramInfo, Video
+
+                # Update status to processing
+                with SqlSession(engine) as session_init:
+                    v_init = session_init.get(Video, video_id)
+                    if v_init:
+                        v_init.processing_status = "processing"
+                        session_init.add(v_init)
+                        session_init.commit()
                 from ..services.telegram_queue import telegram_queue, TelegramUploadJob
                 
                 # Helper to save source to DB
@@ -219,8 +227,22 @@ def background_full_process_task(video_id: int, source_file: str, title: str, or
                 logger.info(f"[BG-{video_id}] All fast tasks complete! "
                            f"Telegram queue: {telegram_queue.pending_count} pending")
                 
+                # Update status to completed
+                with SqlSession(engine) as session_final:
+                    v_final = session_final.get(Video, video_id)
+                    if v_final:
+                        v_final.processing_status = "completed"
+                        session_final.add(v_final)
+                        session_final.commit()
+                
             except Exception as e:
                 logger.error(f"[BG-{video_id}] Process Error: {e}", exc_info=True)
+                with SqlSession(engine) as session_err:
+                    v_err = session_err.get(Video, video_id)
+                    if v_err:
+                        v_err.processing_status = "failed"
+                        session_err.add(v_err)
+                        session_err.commit()
             finally:
                 cleanup_file(source_file)
 
@@ -250,6 +272,14 @@ def transcode_only_task(video_id: int, source_file: str, title: str, original_re
                 logger.info(f"[REPROCESS-{video_id}] Starting transcode-only reprocess...")
                 from sqlmodel import Session as SqlSession
                 from ..models import VideoSource, Video
+
+                # Update status to processing
+                with SqlSession(engine) as session_init:
+                    v_init = session_init.get(Video, video_id)
+                    if v_init:
+                        v_init.processing_status = "processing"
+                        session_init.add(v_init)
+                        session_init.commit()
                 
                 def save_source(provider, res=None, file_id=None, embed_url=None):
                     with SqlSession(engine) as session_bg:
@@ -333,9 +363,22 @@ def transcode_only_task(video_id: int, source_file: str, title: str, original_re
                     shutil.rmtree(transcode_output_dir, ignore_errors=True)
                 
                 logger.info(f"[REPROCESS-{video_id}] Reprocess complete!")
+                # Update status to completed
+                with SqlSession(engine) as session_final:
+                    v_final = session_final.get(Video, video_id)
+                    if v_final:
+                        v_final.processing_status = "completed"
+                        session_final.add(v_final)
+                        session_final.commit()
                 
             except Exception as e:
                 logger.error(f"[REPROCESS-{video_id}] Error: {e}", exc_info=True)
+                with SqlSession(engine) as session_err:
+                    v_err = session_err.get(Video, video_id)
+                    if v_err:
+                        v_err.processing_status = "failed"
+                        session_err.add(v_err)
+                        session_err.commit()
             # NOTE: Do NOT delete source_file — keep for future reprocessing
         
         try:
@@ -408,7 +451,8 @@ async def upload_video(
         storage_mode="multi",
         duration=duration,
         original_resolution=original_resolution,
-        is_short=is_short
+        is_short=is_short,
+        temp_file_path=temp_file_path
     )
     session.add(video)
     session.commit()

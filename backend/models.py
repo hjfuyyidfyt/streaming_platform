@@ -53,6 +53,8 @@ class VideoBase(SQLModel):
     external_id: Optional[str] = None
     embed_url: Optional[str] = None
     is_short: bool = Field(default=False)
+    processing_status: str = Field(default="pending") # "pending", "processing", "completed", "failed"
+    temp_file_path: Optional[str] = None
 
 class Video(VideoBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

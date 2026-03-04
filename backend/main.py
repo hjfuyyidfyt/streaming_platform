@@ -124,6 +124,11 @@ async def on_startup():
     _keep_alive_task = asyncio.create_task(_db_keep_alive())
     logger.info("DB keep-alive started (ping every 4 min).")
 
+    # Start Task Recovery Service
+    from .services.recovery import recover_incomplete_tasks
+    asyncio.create_task(recover_incomplete_tasks())
+    logger.info("Task recovery service triggered.")
+
 @app.on_event("shutdown")
 async def on_shutdown():
     global _keep_alive_task
