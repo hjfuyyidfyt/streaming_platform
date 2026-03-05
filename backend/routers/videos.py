@@ -38,6 +38,7 @@ async def read_videos(
             joinedload(Video.telegram_info),
             selectinload(Video.resolutions)
         )
+        .order_by(Video.upload_date.desc())
         .offset(skip).limit(limit)
     ).all()
     
@@ -58,7 +59,7 @@ async def search_videos(
 ):
     statement = select(Video).where(
         (Video.title.contains(q)) | (Video.description.contains(q))
-    ).options(joinedload(Video.category), joinedload(Video.uploader)).offset(skip).limit(limit)
+    ).options(joinedload(Video.category), joinedload(Video.uploader)).order_by(Video.upload_date.desc()).offset(skip).limit(limit)
     videos = session.exec(statement).all()
     return videos
 
@@ -72,6 +73,7 @@ async def read_shorts(
         select(Video)
         .where(Video.is_short == True)
         .options(joinedload(Video.category), joinedload(Video.uploader))
+        .order_by(Video.upload_date.desc())
         .offset(skip).limit(limit)
     ).all()
     return videos
@@ -106,6 +108,7 @@ async def read_videos_by_category(
         select(Video)
         .where(Video.category_id == category.id)
         .options(joinedload(Video.category), joinedload(Video.uploader))
+        .order_by(Video.upload_date.desc())
         .offset(skip).limit(limit)
     ).all()
     return videos

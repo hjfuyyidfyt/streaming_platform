@@ -282,7 +282,7 @@ async def admin_list_videos(
     current_user: User = Depends(get_current_user)
 ):
     """List all videos with sources for admin."""
-    videos = session.exec(select(Video).offset(skip).limit(limit)).all()
+    videos = session.exec(select(Video).order_by(Video.upload_date.desc()).offset(skip).limit(limit)).all()
     result = []
     for v in videos:
         sources = session.exec(select(VideoSource).where(VideoSource.video_id == v.id)).all()
