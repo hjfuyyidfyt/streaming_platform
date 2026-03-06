@@ -273,6 +273,91 @@ def _delete_video_references(session, video_id):
         session.delete(r)
     return deleted_sources
 
+def regenerate_missing_thumbnails_task():
+    """
+    Background task to scan all videos and regenerate missing thumbnails.
+    """
+    from sqlmodel import Session as SqlSession
+    from ..database import engine
+    from ..models import Video, TelegramInfo
+    from ..services.telegram_uploader import get_telegram_file_bytes
+    from ..services.transcoder import extract_multi_thumbnails
+    import asyncio
+    
+    logger.info("[THUMBNAIL-REGEN] Starting missing thumbnail regeneration task.")
+    
+    with SqlSession(engine) as session:
+        videos = session.exec(select(Video)).all()
+        count_fixed = 0
+        count_failed = 0
+        
+        for video in videos:
+            # Check if expected local thumbnail exists
+            thumb_path = os.path.join(THUMBNAIL_DIR, f"{video.id}.jpg")
+            if not os.path.exists(thumb_path):
+                logger.info(f"[THUMBNAIL-REGEN] Thumb missing for Video #{video.id}. Attempting to fix...")
+                success = False
+                
+                # Method 1: Try from Telegram if available
+                tg_info = session.exec(select(TelegramInfo).where(TelegramInfo.video_id == video.id)).first()
+                if tg_info and tg_info.thumbnail_file_id:
+                    try:
+                        # get_telegram_file_bytes is async, so we need an event loop
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        
+                        thumb_bytes = loop.run_until_complete(get_telegram_file_bytes(tg_info.thumbnail_file_id))
+                        if thumb_bytes:
+                            with open(thumb_path, "wb") as f:
+                                f.write(thumb_bytes)
+                            success = True
+                            logger.info(f"[THUMBNAIL-REGEN] Video #{video.id} thumbnail restored from Telegram.")
+                    except Exception as e:
+                        logger.error(f"[THUMBNAIL-REGEN] Video #{video.id} Telegram fetch failed: {e}")
+                
+                # Method 2: Fallback to local extraction if temp file exists
+                if not success and video.temp_file_path and os.path.exists(video.temp_file_path):
+                    try:
+                        first_thumb, _ = extract_multi_thumbnails(video.temp_file_path, THUMBNAIL_DIR, video.id, is_encrypted=False)
+                        if first_thumb and os.path.exists(first_thumb):
+                            success = True
+                            logger.info(f"[THUMBNAIL-REGEN] Video #{video.id} thumbnail extracted from local temp file.")
+                    except Exception as e:
+                        logger.error(f"[THUMBNAIL-REGEN] Video #{video.id} local extract failed: {e}")
+                
+                # Update DB if success
+                if success:
+                    if video.thumbnail_url != f"/thumbnails/{video.id}.jpg":
+                        video.thumbnail_url = f"/thumbnails/{video.id}.jpg"
+                        session.add(video)
+                    count_fixed += 1
+                else:
+                    logger.warning(f"[THUMBNAIL-REGEN] Could not restore thumbnail for Video #{video.id}.")
+                    count_failed += 1
+        
+        session.commit()
+    
+    logger.info(f"[THUMBNAIL-REGEN] Done! Fixed: {count_fixed}, Failed: {count_failed}")
+
+@router.post("/thumbnails/regenerate")
+async def admin_regenerate_thumbnails(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Trigger a background task to find and fix missing thumbnails.
+    """
+    background_tasks.add_task(regenerate_missing_thumbnails_task)
+    return {
+        "status": "success",
+        "message": "Thumbnail regeneration task started in the background."
+    }
+
+
 
 @router.get("/videos")
 async def admin_list_videos(

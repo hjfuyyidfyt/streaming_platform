@@ -102,6 +102,7 @@ const Settings = () => {
                     + '`/find` — Search videos by title (interactive)\n'
                     + '`/delete` — Interactive video deletion tool\n'
                     + '`/reprocess <id>` — Re-transcode video & upload qualities\n'
+                    + '`/regenerate-thumbnails` — Restore missing thumbnails\n'
                     + '`/ads` — View ad status\n'
                     + '`/ads off` — Disable all ads globally\n'
                     + '`/ads on` — Enable all ads globally\n'
@@ -258,6 +259,24 @@ const Settings = () => {
                     }
                 } catch (err) {
                     return `❌ **Reprocess Error:** ${err.message}`;
+                }
+            }
+
+            // ===== /regenerate-thumbnails =====
+            if (primary === 'regenerate-thumbnails') {
+                try {
+                    const res = await fetch(`${API_URL}/admin/thumbnails/regenerate`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        return `🖼️ **Thumbnail Regeneration Started!**\n\n${data.message}\n\nThe system is now scanning for videos with missing thumbnails and will attempt to restore or re-extract them. Check backend logs for progress.`;
+                    } else {
+                        return `❌ **Regeneration Failed**\n\n${data.detail || 'Unknown error'}`;
+                    }
+                } catch (err) {
+                    return `❌ **Regeneration Error:** ${err.message}`;
                 }
             }
 
@@ -560,11 +579,42 @@ const Settings = () => {
                                         <h2 className="text-xl font-semibold">General Settings</h2>
                                         <p className="text-sm text-gray-400 mt-1">Basic identification and behavior of your platform.</p>
                                     </div>
-                                    <div className="bg-[#242424] p-8 rounded-xl border border-gray-800 flex flex-col items-center justify-center text-center space-y-3 opacity-60">
-                                        <Globe className="w-10 h-10 text-gray-600" />
-                                        <p className="text-gray-400">General settings module is being prepared.</p>
-                                        <p className="text-xs text-gray-600 italic">Coming in next update</p>
+
+                                    <div className="bg-[#242424] p-6 rounded-xl border border-gray-700/30">
+                                        <div className="flex items-start gap-4">
+                                            <div className="p-3 bg-indigo-500/10 rounded-lg text-indigo-400">
+                                                <FileArchive className="w-6 h-6" />
+                                            </div>
+                                            <div className="flex-1">
+                                                <h3 className="text-lg font-semibold text-white mb-1">Regenerate Missing Thumbnails</h3>
+                                                <p className="text-sm text-gray-400 leading-relaxed mb-4">
+                                                    Scan all videos in the database. If a video is missing its local thumbnail image, the system will attempt to restore it either by fetching from Telegram (if uploaded there) or by re-extracting it from the local temporary file if it still exists.
+                                                </p>
+                                                <button
+                                                    onClick={async () => {
+                                                        try {
+                                                            const res = await fetch(`${API_URL}/admin/thumbnails/regenerate`, {
+                                                                method: 'POST',
+                                                                headers: { 'Authorization': `Bearer ${token}` }
+                                                            });
+                                                            const data = await res.json();
+                                                            if (res.ok) {
+                                                                alert(`Thumbnail Regeneration Started!\n\n${data.message}`);
+                                                            } else {
+                                                                alert(`Error: ${data.detail || 'Unknown error'}`);
+                                                            }
+                                                        } catch (err) {
+                                                            alert(`Error: ${err.message}`);
+                                                        }
+                                                    }}
+                                                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg shadow-lg shadow-indigo-500/20 transition-all active:scale-95 flex items-center gap-2"
+                                                >
+                                                    <Sparkles className="w-4 h-4" /> Start Regeneration task
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
+
                                 </div>
                             )}
 
