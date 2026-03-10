@@ -55,6 +55,8 @@ class VideoBase(SQLModel):
     is_short: bool = Field(default=False)
     processing_status: str = Field(default="pending") # "pending", "processing", "completed", "failed"
     temp_file_path: Optional[str] = None
+    direct_url: Optional[str] = None
+    embed_code: Optional[str] = None
 
 class Video(VideoBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -87,6 +89,8 @@ class VideoPublic(VideoBase):
     telegram_info: Optional[TelegramInfoPublic] = None
     resolutions: List[VideoResolutionPublic] = []
     is_short: bool = False
+    direct_url: Optional[str] = None
+    embed_code: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 class VideoSource(SQLModel, table=True):

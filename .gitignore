@@ -20,8 +20,12 @@ build/
 # Backend temp files
 backend/temp_uploads/
 backend/temp_transcodes/
+backend/temp_tg_uploads/
 backend/test_*/
 backend/thumbnails/
+backend/*.session
+backend/*.session-journal
+pnpm-lock.yaml
 
 # Node.js / Frontend
 node_modules/
