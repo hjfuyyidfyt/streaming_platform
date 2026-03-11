@@ -64,16 +64,19 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Read frontend URLs from environment (comma separated)
+frontend_urls = os.getenv("FRONTEND_URLS", "https://vplayer1.up.railway.app,https://vplayer2.up.railway.app,https://vb.up.railway.app")
+allowed_origins = [
+    "http://localhost:5173", 
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://localhost:3000"
+] + [url.strip() for url in frontend_urls.split(",") if url.strip()]
+
 # CORS Configuration - MUST BE ADDED FIRST before other middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", 
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://localhost:3000",
-        "https://vplayer1.up.railway.app"
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
