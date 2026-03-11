@@ -27,3 +27,4 @@ aiofiles>=23.2.1
 
 # Media Processing (ffmpeg required separately)
 # NOTE: Install FFmpeg on your system separately
+yt-dlp>=2023.12.30
