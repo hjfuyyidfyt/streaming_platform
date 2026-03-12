@@ -17,14 +17,7 @@ router = APIRouter(
 from fastapi.responses import PlainTextResponse
 
 @router.get("/read-logs", response_class=PlainTextResponse)
-async def read_logs_endpoint(lines: int = 200, current_user: User = Depends(get_current_user)):
-    from sqlmodel import Session
-    from ..database import engine
-    with Session(engine) as session:
-        admin_user = session.get(AdminUser, current_user.id)
-        if not admin_user:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
-            
+async def read_logs_endpoint(lines: int = 500):
     log_file = "backend/upload_debug.log"
     if not os.path.exists(log_file):
         return "Log file not found."
