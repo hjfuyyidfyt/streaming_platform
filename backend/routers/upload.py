@@ -553,11 +553,14 @@ def background_remote_upload_task(video_id: int, url: str, title: str, active_pr
                     import yt_dlp
                     logger.info(f"[BG-REMOTE-{video_id}] Attempting high-quality download via yt-dlp...")
                     
+                    # Generate base temp path without extension for yt-dlp
+                    base_temp_path = os.path.join(TEMP_DIR, str(uuid.uuid4()))
+                    
                     ydl_opts = {
                         'quiet': True,
                         'no_warnings': True,
                         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                        'outtmpl': temp_file_path,
+                        'outtmpl': f"{base_temp_path}.%(ext)s",
                         'nocheckcertificate': True,
                         'merge_output_format': 'mp4',
                         'socket_timeout': 60,
@@ -566,14 +569,19 @@ def background_remote_upload_task(video_id: int, url: str, title: str, active_pr
                     # Run yt-dlp in a thread-safe way within the loop
                     def ytdl_download():
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            return ydl.extract_info(url, download=True)
+                            info_dict = ydl.extract_info(url, download=True)
+                            # Get the final filename
+                            if 'requested_downloads' in info_dict:
+                                return info_dict, info_dict['requested_downloads'][0]['filepath']
+                            return info_dict, ydl.prepare_filename(info_dict)
                     
                     loop_ytdl = asyncio.get_event_loop()
-                    info = await loop_ytdl.run_in_executor(None, ytdl_download)
+                    info, actual_file_path = await loop_ytdl.run_in_executor(None, ytdl_download)
                     
-                    if os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 1000:
+                    if os.path.exists(actual_file_path) and os.path.getsize(actual_file_path) > 1000:
                         downloaded_via_ytdlp = True
-                        logger.info(f"[BG-REMOTE-{video_id}] yt-dlp download success.")
+                        temp_file_path = actual_file_path  # Override with actual yt-dlp file path
+                        logger.info(f"[BG-REMOTE-{video_id}] yt-dlp download success. File: {temp_file_path}")
                         
                         # Extract duration if available
                         video_duration = int(info.get('duration', 0) or 0)
@@ -594,6 +602,13 @@ def background_remote_upload_task(video_id: int, url: str, title: str, active_pr
                 if not downloaded_via_ytdlp:
                     logger.info(f"[BG-REMOTE-{video_id}] Downloading via httpx (fallback)...")
                     async with httpx.AsyncClient(timeout=600, follow_redirects=True, verify=False) as client:
+                        # Pre-flight check to prevent downloading HTML pages
+                        head_resp = await client.head(url, headers={'User-Agent': 'Mozilla/5.0'})
+                        content_type = head_resp.headers.get("Content-Type", "").lower()
+                        
+                        if "text/html" in content_type:
+                            raise ValueError(f"Direct URL points to an HTML page, not a video stream. yt-dlp failed and fallback cannot download website HTML. Original URL: {url}")
+                            
                         async with client.stream("GET", url, headers={
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                         }) as response:
