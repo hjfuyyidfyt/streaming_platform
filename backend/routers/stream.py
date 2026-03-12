@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, StreamingResponse, Response
 from sqlmodel import Session, select
 from ..database import get_session
 from ..models import Video, TelegramInfo, VideoResolution
@@ -39,16 +39,16 @@ async def _get_stream_client():
         raise ValueError("Telegram credentials not fully configured in .env")
     
     from telethon import TelegramClient
+    from telethon.sessions import MemorySession
     
-    session_path = str(Path(__file__).resolve().parent.parent / 'bot_session_stream')
     _stream_client = TelegramClient(
-        session_path,
+        MemorySession(),
         int(api_id),
         api_hash,
         timeout=120,
     )
     await _stream_client.start(bot_token=token)
-    logger.info("[Stream] Telethon client connected for streaming")
+    logger.info("[Stream] Telethon client connected for streaming (MemorySession)")
     return _stream_client
 
 
@@ -128,6 +128,7 @@ async def get_video_resolutions(
 @router.get("/{video_id}")
 async def stream_video(
     video_id: int,
+    request: Request,
     resolution: Optional[str] = Query(None),
     provider: Optional[str] = Query(None),
     session: Session = Depends(get_session)
@@ -203,24 +204,45 @@ async def stream_video(
                         select(TelegramInfo).where(TelegramInfo.video_id == video_id)
                     ).first()
                     
-                    msg_id = None
-                    if tg_info and tg_info.channel_message_id:
-                        msg_id = tg_info.channel_message_id
-                    
                     if msg_id:
                         message = await client.get_messages(channel_id, ids=msg_id)
-                        if message and message.media:
+                        if message and message.media and hasattr(message.media, "document"):
+                            file_size = message.media.document.size
+                            
+                            range_header = request.headers.get("Range")
+                            start = 0
+                            end = file_size - 1
+                            
+                            if range_header:
+                                ranges = range_header.replace("bytes=", "").split("-")
+                                start = int(ranges[0]) if ranges[0] else 0
+                                end = int(ranges[1]) if len(ranges) > 1 and ranges[1] else file_size - 1
+                            
+                            content_length = (end - start) + 1
+                            
+                            headers = {
+                                "Accept-Ranges": "bytes",
+                                "Content-Length": str(content_length),
+                                "Content-Type": "video/mp4",
+                                "Content-Disposition": f"inline; filename=video_{video_id}.mp4"
+                            }
+                            
+                            status_code = 200
+                            if range_header:
+                                headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+                                status_code = 206
+                                
                             async def telethon_stream():
-                                async for chunk in client.iter_download(message.media, chunk_size=65536):
+                                async for chunk in client.iter_download(message.media, offset=start, limit=content_length, chunk_size=65536):
+                                    if not chunk:
+                                        break
                                     yield chunk
                             
                             return StreamingResponse(
                                 telethon_stream(),
-                                media_type="video/mp4",
-                                headers={
-                                    "Accept-Ranges": "bytes",
-                                    "Content-Disposition": f"inline; filename=video_{video_id}.mp4"
-                                }
+                                status_code=status_code,
+                                headers=headers,
+                                media_type="video/mp4"
                             )
                     else:
                         logger.warning(f"No channel_message_id found for video {video_id}, falling back to Bot API")
@@ -231,19 +253,36 @@ async def stream_video(
         file_url = await get_telegram_file_url(file_id)
         logger.info(f"Streaming video {video_id} from Bot API URL")
         
-        async def stream_generator():
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                async with client.stream("GET", file_url) as response:
-                    async for chunk in response.aiter_bytes(chunk_size=65536):
-                        yield chunk
+        range_header = request.headers.get("Range")
+        req_headers = {}
+        if range_header:
+            req_headers["Range"] = range_header
         
+        # Proxy request directly to Telegram API with Range header
+        client = httpx.AsyncClient(timeout=300.0)
+        bot_api_req = client.build_request("GET", file_url, headers=req_headers)
+        bot_api_resp = await client.send(bot_api_req, stream=True)
+        
+        async def stream_generator():
+            async for chunk in bot_api_resp.aiter_bytes(chunk_size=65536):
+                yield chunk
+            await client.aclose()
+            
+        proxy_headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": f"inline; filename=video_{video_id}.mp4",
+            "Content-Type": "video/mp4",
+        }
+        if "Content-Range" in bot_api_resp.headers:
+            proxy_headers["Content-Range"] = bot_api_resp.headers["Content-Range"]
+        if "Content-Length" in bot_api_resp.headers:
+            proxy_headers["Content-Length"] = bot_api_resp.headers["Content-Length"]
+            
         return StreamingResponse(
             stream_generator(),
-            media_type="video/mp4",
-            headers={
-                "Accept-Ranges": "bytes",
-                "Content-Disposition": f"inline; filename=video_{video_id}.mp4"
-            }
+            status_code=bot_api_resp.status_code,
+            headers=proxy_headers,
+            media_type="video/mp4"
         )
 
     except Exception as e:
