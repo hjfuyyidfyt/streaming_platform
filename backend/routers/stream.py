@@ -204,6 +204,22 @@ async def stream_video(
                         select(TelegramInfo).where(TelegramInfo.video_id == video_id)
                     ).first()
                     
+                    msg_id = None
+                    if tg_info and tg_info.channel_message_id:
+                        msg_id = tg_info.channel_message_id
+                    
+                    # Fallback to VideoResolution table if tg_info is missing
+                    if not msg_id and file_id:
+                        from ..models import VideoResolution
+                        res_info = session.exec(
+                            select(VideoResolution).where(
+                                VideoResolution.video_id == video_id, 
+                                VideoResolution.file_id == file_id
+                            )
+                        ).first()
+                        if res_info and res_info.channel_message_id:
+                            msg_id = res_info.channel_message_id
+                    
                     if msg_id:
                         message = await client.get_messages(channel_id, ids=msg_id)
                         if message and message.media and hasattr(message.media, "document"):
